@@ -1,11 +1,17 @@
-module github.com/skshohagmiah/flin
+module github.com/skshohagmiah/flin/examples/web-app
 
 go 1.24.4
 
-require github.com/dgraph-io/badger/v4 v4.8.0
+replace github.com/skshohagmiah/flin => ../..
+
+require (
+	github.com/google/uuid v1.6.0
+	github.com/skshohagmiah/flin v0.0.0-00010101000000-000000000000
+)
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/dgraph-io/badger/v4 v4.8.0 // indirect
 	github.com/dgraph-io/ristretto/v2 v2.2.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
