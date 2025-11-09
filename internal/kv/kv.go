@@ -6,9 +6,25 @@ import (
 	"github.com/skshohagmiah/flin/internal/storage"
 )
 
+// StorageBackend defines the storage interface
+type StorageBackend interface {
+	Set(key string, value []byte, ttl time.Duration) error
+	Get(key string) ([]byte, error)
+	Delete(key string) error
+	Exists(key string) (bool, error)
+	Incr(key string) error
+	Decr(key string) error
+	Scan(prefix string) ([][]byte, error)
+	BatchSet(kvPairs map[string][]byte, ttl time.Duration) error
+	BatchGet(keys []string) (map[string][]byte, error)
+	BatchDelete(keys []string) error
+	Close() error
+}
+
 // KVStore is the developer-facing API for key-value operations
 type KVStore struct {
-	storage *storage.Storage
+	storage   StorageBackend
+	isMemory  bool
 }
 
 // New creates a new KV store with BadgerDB backend at the specified path
@@ -18,7 +34,28 @@ func New(path string) (*KVStore, error) {
 		return nil, err
 	}
 
-	return &KVStore{storage: store}, nil
+	return &KVStore{
+		storage:  store,
+		isMemory: false,
+	}, nil
+}
+
+// NewMemory creates a new in-memory KV store (like Redis)
+func NewMemory() (*KVStore, error) {
+	store, err := storage.NewMemoryStorage()
+	if err != nil {
+		return nil, err
+	}
+
+	return &KVStore{
+		storage:  store,
+		isMemory: true,
+	}, nil
+}
+
+// IsMemory returns true if this is an in-memory store
+func (k *KVStore) IsMemory() bool {
+	return k.isMemory
 }
 
 // Close closes the underlying storage

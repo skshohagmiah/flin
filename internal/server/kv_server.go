@@ -7,13 +7,23 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/skshohagmiah/clusterkit"
 	"github.com/skshohagmiah/flin/internal/kv"
+	"github.com/skshohagmiah/flin/pkg/protocol"
 )
 
+// Buffer pool for connection buffers (32KB each)
+var bufferPool = sync.Pool{
+	New: func() interface{} {
+		return make([]byte, 32768)
+	},
+}
+
 // KVServer implements distributed KV server with ClusterKit coordination
+// Uses hybrid architecture: fast path (inline) + worker pool for optimal performance
 type KVServer struct {
 	store       *kv.KVStore
 	ck          *clusterkit.ClusterKit
@@ -22,15 +32,22 @@ type KVServer struct {
 	connCounter atomic.Uint64
 	nodeID      string
 
+	// Worker pool for slow operations
+	workerPool *WorkerPool
+	jobQueue   chan *Job
+
 	// Metrics
 	opsProcessed atomic.Uint64
+	opsFastPath  atomic.Uint64
+	opsSlowPath  atomic.Uint64
+	opsErrors    atomic.Uint64
 	activeConns  atomic.Int64
 
 	ctx    context.Context
 	cancel context.CancelFunc
 }
 
-// Connection represents a single client connection (NATS-style)
+// Connection represents a single client connection (NATS-style with hybrid processing)
 type Connection struct {
 	id     uint64
 	conn   net.Conn
@@ -43,12 +60,57 @@ type Connection struct {
 	readBuf  []byte
 	writeBuf []byte
 
+	// Metrics for adaptive routing
+	opsProcessed atomic.Uint64
+	avgLatency   atomic.Int64 // in nanoseconds
+
 	ctx    context.Context
 	cancel context.CancelFunc
 }
 
-// NewKVServer creates a new distributed KV server
+// Job represents a work item for the worker pool
+type Job struct {
+	conn      *Connection
+	cmd       string
+	key       string
+	value     []byte
+	// Batch operation fields
+	keys      []string
+	values    [][]byte
+	kvPairs   map[string][]byte
+	startTime time.Time
+}
+
+// WorkerPool manages a pool of worker goroutines
+type WorkerPool struct {
+	workers  int
+	jobQueue chan *Job
+	store    *kv.KVStore
+	wg       sync.WaitGroup
+
+	// Metrics
+	jobsProcessed atomic.Uint64
+	activeWorkers atomic.Int32
+}
+
+const (
+	// Fast path threshold: operations faster than this are processed inline
+	FastPathThreshold = 100 * time.Microsecond
+
+	// Worker pool size (optimized for maximum throughput)
+	DefaultWorkerPoolSize = 256
+
+	// Job queue buffer size (increased for higher throughput)
+	DefaultJobQueueSize = 50000
+)
+
+// NewKVServer creates a new distributed KV server with hybrid architecture
 func NewKVServer(store *kv.KVStore, ck *clusterkit.ClusterKit, addr string, nodeID string) (*KVServer, error) {
+	return NewKVServerWithWorkers(store, ck, addr, nodeID, DefaultWorkerPoolSize)
+}
+
+// NewKVServerWithWorkers creates a server with custom worker count
+func NewKVServerWithWorkers(store *kv.KVStore, ck *clusterkit.ClusterKit, addr string, nodeID string, workerCount int) (*KVServer, error) {
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen: %w", err)
@@ -56,19 +118,161 @@ func NewKVServer(store *kv.KVStore, ck *clusterkit.ClusterKit, addr string, node
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	jobQueue := make(chan *Job, DefaultJobQueueSize)
+
 	srv := &KVServer{
 		store:    store,
 		ck:       ck,
 		listener: listener,
 		nodeID:   nodeID,
+		jobQueue: jobQueue,
 		ctx:      ctx,
 		cancel:   cancel,
 	}
 
+	// Initialize worker pool with custom size
+	srv.workerPool = NewWorkerPool(workerCount, jobQueue, store)
+
 	// Register ClusterKit event hooks
 	srv.registerHooks()
 
+	log.Printf("[Hybrid] Server initialized with %d workers", workerCount)
+
 	return srv, nil
+}
+
+// NewWorkerPool creates a new worker pool
+func NewWorkerPool(numWorkers int, jobQueue chan *Job, store *kv.KVStore) *WorkerPool {
+	wp := &WorkerPool{
+		workers:  numWorkers,
+		jobQueue: jobQueue,
+		store:    store,
+	}
+
+	// Start workers
+	for i := 0; i < numWorkers; i++ {
+		wp.wg.Add(1)
+		go wp.worker(i)
+	}
+
+	log.Printf("[WorkerPool] Started %d workers", numWorkers)
+
+	return wp
+}
+
+// worker processes jobs from the queue
+func (wp *WorkerPool) worker(id int) {
+	defer wp.wg.Done()
+
+	for job := range wp.jobQueue {
+		wp.activeWorkers.Add(1)
+
+		// Process job
+		response := wp.processJob(job)
+
+		// Send response back to connection
+		select {
+		case job.conn.outQueue <- response:
+			wp.jobsProcessed.Add(1)
+		case <-job.conn.ctx.Done():
+			// Connection closed
+		default:
+			// Queue full, drop response
+		}
+
+		wp.activeWorkers.Add(-1)
+	}
+}
+
+// processJob executes a job and returns the response
+func (wp *WorkerPool) processJob(job *Job) []byte {
+	switch job.cmd {
+	case "SET":
+		err := wp.store.Set(job.key, job.value, 0)
+		if err != nil {
+			return formatError(err)
+		}
+		return []byte("+OK\r\n")
+
+	case "GET":
+		val, err := wp.store.Get(job.key)
+		if err != nil {
+			return formatError(err)
+		}
+		return formatBulkString(val)
+
+	case "DEL":
+		err := wp.store.Delete(job.key)
+		if err != nil {
+			return formatError(err)
+		}
+		return []byte("+OK\r\n")
+
+	case "EXISTS":
+		exists, err := wp.store.Exists(job.key)
+		if err != nil {
+			return formatError(err)
+		}
+		if exists {
+			return []byte(":1\r\n")
+		}
+		return []byte(":0\r\n")
+
+	case "INCR":
+		err := wp.store.Incr(job.key)
+		if err != nil {
+			return formatError(err)
+		}
+		return []byte("+OK\r\n")
+
+	case "DECR":
+		err := wp.store.Decr(job.key)
+		if err != nil {
+			return formatError(err)
+		}
+		return []byte("+OK\r\n")
+
+	// Batch operations
+	case "MSET":
+		// Use atomic batch set
+		kvPairs := make(map[string][]byte, len(job.keys))
+		for i, key := range job.keys {
+			kvPairs[key] = job.values[i]
+		}
+		err := wp.store.BatchSet(kvPairs, 0)
+		if err != nil {
+			return formatError(err)
+		}
+		return []byte("+OK\r\n")
+
+	case "MGET":
+		// Use atomic batch get
+		results, err := wp.store.BatchGet(job.keys)
+		if err != nil {
+			return formatError(err)
+		}
+		// Convert map to ordered slice
+		values := make([][]byte, 0, len(job.keys))
+		for _, key := range job.keys {
+			if val, ok := results[key]; ok {
+				values = append(values, val)
+			} else {
+				values = append(values, []byte(""))
+			}
+		}
+		return formatBulkStrings(values)
+
+	case "MDEL":
+		// Use atomic batch delete
+		err := wp.store.BatchDelete(job.keys)
+		if err != nil {
+			return formatError(err)
+		}
+		return []byte(fmt.Sprintf(":%d\r\n", len(job.keys)))
+
+	default:
+		return []byte("-ERR unknown command\r\n")
+	}
 }
 
 // registerHooks sets up ClusterKit event handlers
@@ -120,6 +324,50 @@ func (s *KVServer) Start() error {
 	}
 }
 
+// optimizeTCPConnection applies TCP optimizations for high throughput
+func optimizeTCPConnection(conn net.Conn) error {
+	tcpConn, ok := conn.(*net.TCPConn)
+	if !ok {
+		return nil
+	}
+
+	// Disable Nagle's algorithm for low latency
+	if err := tcpConn.SetNoDelay(true); err != nil {
+		return err
+	}
+
+	// Enable TCP keepalive
+	if err := tcpConn.SetKeepAlive(true); err != nil {
+		return err
+	}
+	if err := tcpConn.SetKeepAlivePeriod(30 * time.Second); err != nil {
+		return err
+	}
+
+	// Set socket buffer sizes for high throughput
+	rawConn, err := tcpConn.SyscallConn()
+	if err != nil {
+		return err
+	}
+
+	var sockErr error
+	err = rawConn.Control(func(fd uintptr) {
+		// Set send buffer to 4MB
+		sockErr = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_SNDBUF, 4*1024*1024)
+		if sockErr != nil {
+			return
+		}
+
+		// Set receive buffer to 4MB
+		sockErr = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_RCVBUF, 4*1024*1024)
+	})
+
+	if err != nil {
+		return err
+	}
+	return sockErr
+}
+
 // handleConnection manages a single client connection
 func (s *KVServer) handleConnection(netConn net.Conn) {
 	connID := s.connCounter.Add(1)
@@ -129,13 +377,22 @@ func (s *KVServer) handleConnection(netConn net.Conn) {
 	ctx, cancel := context.WithCancel(s.ctx)
 	defer cancel()
 
+	// Optimize TCP connection
+	if err := optimizeTCPConnection(netConn); err != nil {
+		log.Printf("[WARN] Failed to optimize TCP connection: %v", err)
+	}
+
+	// Get buffers from pool
+	readBuf := bufferPool.Get().([]byte)
+	writeBuf := bufferPool.Get().([]byte)
+
 	conn := &Connection{
 		id:       connID,
 		conn:     netConn,
 		server:   s,
-		outQueue: make(chan []byte, 1000), // Buffered for non-blocking sends
-		readBuf:  make([]byte, 32768),     // 32KB read buffer
-		writeBuf: make([]byte, 32768),     // 32KB write buffer
+		outQueue: make(chan []byte, 5000), // Increased for higher throughput
+		readBuf:  readBuf,
+		writeBuf: writeBuf,
 		ctx:      ctx,
 		cancel:   cancel,
 	}
@@ -143,6 +400,12 @@ func (s *KVServer) handleConnection(netConn net.Conn) {
 	s.connections.Store(connID, conn)
 	defer s.connections.Delete(connID)
 	defer netConn.Close()
+
+	// Return buffers to pool when done
+	defer func() {
+		bufferPool.Put(readBuf)
+		bufferPool.Put(writeBuf)
+	}()
 
 	// NATS pattern: spawn readLoop and writeLoop
 	var wg sync.WaitGroup
@@ -161,7 +424,7 @@ func (s *KVServer) handleConnection(netConn net.Conn) {
 	wg.Wait()
 }
 
-// readLoop handles incoming requests (NATS-style: parse and dispatch in same goroutine)
+// readLoop handles incoming requests with hybrid processing
 func (c *Connection) readLoop() {
 	defer c.cancel()
 
@@ -180,9 +443,8 @@ func (c *Connection) readLoop() {
 			return
 		}
 
-		// Parse and process in same goroutine (no spawning!)
-		// This is the NATS way: fast, inline processing
-		c.processRequest(c.readBuf[:n])
+		// Process with hybrid approach: fast path inline, slow path to worker pool
+		c.processRequestHybrid(c.readBuf[:n])
 	}
 }
 
@@ -206,23 +468,234 @@ func (c *Connection) writeLoop() {
 	}
 }
 
-// processRequest handles a single request inline (NATS pattern: no goroutine spawn)
-func (c *Connection) processRequest(data []byte) {
-	// Fast path: parse command inline
-	cmd, key, value, err := c.parseCommand(data)
+// processRequestHybrid implements hybrid processing: fast path inline, slow path to worker pool
+// Auto-detects binary vs text protocol
+func (c *Connection) processRequestHybrid(data []byte) {
+	startTime := time.Now()
+
+	// Detect protocol: binary starts with opcode 0x01-0x12, text starts with ASCII letters
+	isBinary := len(data) > 0 && (data[0] >= 0x01 && data[0] <= 0x12)
+
+	if isBinary {
+		c.processRequestBinary(data, startTime)
+	} else {
+		c.processRequestText(data, startTime)
+	}
+}
+
+// processRequestText handles text protocol (existing)
+func (c *Connection) processRequestText(data []byte, startTime time.Time) {
+	// Parse command (handles both single and batch operations)
+	cmd, key, value, keys, values, kvPairs, err := c.parseCommandExtended(data)
 	if err != nil {
 		c.sendError(err)
+		c.server.opsErrors.Add(1)
 		return
 	}
 
-	// Execute command (inline, no spawning)
+	// Decide: fast path or slow path?
+	if c.shouldUseFastPath(cmd) {
+		// Fast path: process inline (NATS-style)
+		if keys != nil || kvPairs != nil {
+			c.processFastPathBatch(cmd, keys, values, kvPairs, startTime)
+		} else {
+			c.processFastPath(cmd, key, value, startTime)
+		}
+	} else {
+		// Slow path: dispatch to worker pool
+		if keys != nil || kvPairs != nil {
+			c.processSlowPathBatch(cmd, keys, values, kvPairs, startTime)
+		} else {
+			c.processSlowPath(cmd, key, value, startTime)
+		}
+	}
+}
+
+// processRequestBinary handles binary protocol (high performance)
+func (c *Connection) processRequestBinary(data []byte, startTime time.Time) {
+	// Parse binary request
+	req, err := protocol.DecodeRequest(data)
+	if err != nil {
+		c.sendBinaryError(err)
+		c.server.opsErrors.Add(1)
+		return
+	}
+
+	// Process based on opcode
+	switch req.OpCode {
+	case protocol.OpSet:
+		c.processBinarySet(req, startTime)
+	case protocol.OpGet:
+		c.processBinaryGet(req, startTime)
+	case protocol.OpDel:
+		c.processBinaryDel(req, startTime)
+	case protocol.OpMSet:
+		c.processBinaryMSet(req, startTime)
+	case protocol.OpMGet:
+		c.processBinaryMGet(req, startTime)
+	case protocol.OpMDel:
+		c.processBinaryMDel(req, startTime)
+	default:
+		c.sendBinaryError(fmt.Errorf("unknown opcode"))
+		c.server.opsErrors.Add(1)
+	}
+}
+
+// Binary operation handlers (fast path - inline processing)
+func (c *Connection) processBinarySet(req *protocol.Request, startTime time.Time) {
+	err := c.server.store.Set(req.Key, req.Value, 0)
+	
+	var response []byte
+	if err != nil {
+		response = protocol.EncodeErrorResponse(err)
+	} else {
+		response = protocol.EncodeOKResponse()
+	}
+	
+	c.sendBinaryResponse(response, startTime)
+}
+
+func (c *Connection) processBinaryGet(req *protocol.Request, startTime time.Time) {
+	val, err := c.server.store.Get(req.Key)
+	
+	var response []byte
+	if err != nil {
+		response = protocol.EncodeErrorResponse(err)
+	} else {
+		response = protocol.EncodeValueResponse(val)
+	}
+	
+	c.sendBinaryResponse(response, startTime)
+}
+
+func (c *Connection) processBinaryDel(req *protocol.Request, startTime time.Time) {
+	err := c.server.store.Delete(req.Key)
+	
+	var response []byte
+	if err != nil {
+		response = protocol.EncodeErrorResponse(err)
+	} else {
+		response = protocol.EncodeOKResponse()
+	}
+	
+	c.sendBinaryResponse(response, startTime)
+}
+
+func (c *Connection) processBinaryMSet(req *protocol.Request, startTime time.Time) {
+	// Use atomic batch set
+	kvPairs := make(map[string][]byte, len(req.Keys))
+	for i, key := range req.Keys {
+		kvPairs[key] = req.Values[i]
+	}
+	
+	err := c.server.store.BatchSet(kvPairs, 0)
+	
+	var response []byte
+	if err != nil {
+		response = protocol.EncodeErrorResponse(err)
+	} else {
+		response = protocol.EncodeOKResponse()
+	}
+	
+	c.sendBinaryResponse(response, startTime)
+}
+
+func (c *Connection) processBinaryMGet(req *protocol.Request, startTime time.Time) {
+	results, err := c.server.store.BatchGet(req.Keys)
+	
+	var response []byte
+	if err != nil {
+		response = protocol.EncodeErrorResponse(err)
+	} else {
+		// Convert map to ordered slice
+		values := make([][]byte, 0, len(req.Keys))
+		for _, key := range req.Keys {
+			if val, ok := results[key]; ok {
+				values = append(values, val)
+			} else {
+				values = append(values, []byte{})
+			}
+		}
+		response = protocol.EncodeMultiValueResponse(values)
+	}
+	
+	c.sendBinaryResponse(response, startTime)
+}
+
+func (c *Connection) processBinaryMDel(req *protocol.Request, startTime time.Time) {
+	err := c.server.store.BatchDelete(req.Keys)
+	
+	var response []byte
+	if err != nil {
+		response = protocol.EncodeErrorResponse(err)
+	} else {
+		response = protocol.EncodeOKResponse()
+	}
+	
+	c.sendBinaryResponse(response, startTime)
+}
+
+func (c *Connection) sendBinaryResponse(response []byte, startTime time.Time) {
+	select {
+	case c.outQueue <- response:
+		c.server.opsProcessed.Add(1)
+		c.server.opsFastPath.Add(1)
+		c.opsProcessed.Add(1)
+		
+		latency := time.Since(startTime)
+		c.updateAvgLatency(latency)
+	case <-c.ctx.Done():
+		return
+	default:
+		c.server.opsErrors.Add(1)
+	}
+}
+
+func (c *Connection) sendBinaryError(err error) {
+	response := protocol.EncodeErrorResponse(err)
+	select {
+	case c.outQueue <- response:
+	case <-c.ctx.Done():
+	default:
+	}
+}
+
+// shouldUseFastPath determines if operation should use fast path
+func (c *Connection) shouldUseFastPath(cmd string) bool {
+	// Simple operations go to fast path
+	switch cmd {
+	case "GET", "EXISTS", "MGET":
+		// Read operations are typically fast (cache hits)
+		return true
+	case "SET", "DEL":
+		// Check connection's average latency
+		avgLatency := time.Duration(c.avgLatency.Load())
+		if avgLatency > FastPathThreshold {
+			// This connection is experiencing slow operations
+			return false
+		}
+		return true
+	case "INCR", "DECR":
+		// Atomic operations, usually fast
+		return true
+	case "MSET", "MDEL":
+		// Batch operations go to slow path (more work)
+		return false
+	default:
+		// Unknown commands go to slow path
+		return false
+	}
+}
+
+// processFastPath handles operations inline (NATS-style)
+func (c *Connection) processFastPath(cmd, key string, value []byte, startTime time.Time) {
 	var response []byte
 
 	switch cmd {
 	case "SET":
-		err = c.server.store.Set(key, value, 0)
+		err := c.server.store.Set(key, value, 0)
 		if err != nil {
-			response = c.formatError(err)
+			response = formatError(err)
 		} else {
 			response = []byte("+OK\r\n")
 		}
@@ -230,15 +703,15 @@ func (c *Connection) processRequest(data []byte) {
 	case "GET":
 		val, err := c.server.store.Get(key)
 		if err != nil {
-			response = c.formatError(err)
+			response = formatError(err)
 		} else {
-			response = c.formatBulkString(val)
+			response = formatBulkString(val)
 		}
 
 	case "DEL":
-		err = c.server.store.Delete(key)
+		err := c.server.store.Delete(key)
 		if err != nil {
-			response = c.formatError(err)
+			response = formatError(err)
 		} else {
 			response = []byte("+OK\r\n")
 		}
@@ -246,34 +719,175 @@ func (c *Connection) processRequest(data []byte) {
 	case "EXISTS":
 		exists, err := c.server.store.Exists(key)
 		if err != nil {
-			response = c.formatError(err)
+			response = formatError(err)
 		} else if exists {
 			response = []byte(":1\r\n")
 		} else {
 			response = []byte(":0\r\n")
 		}
 
+	case "INCR":
+		err := c.server.store.Incr(key)
+		if err != nil {
+			response = formatError(err)
+		} else {
+			response = []byte("+OK\r\n")
+		}
+
+	case "DECR":
+		err := c.server.store.Decr(key)
+		if err != nil {
+			response = formatError(err)
+		} else {
+			response = []byte("+OK\r\n")
+		}
+
 	default:
 		response = []byte("-ERR unknown command\r\n")
 	}
 
-	// Non-blocking send to write queue
+	// Send response
 	select {
 	case c.outQueue <- response:
 		c.server.opsProcessed.Add(1)
+		c.server.opsFastPath.Add(1)
+		c.opsProcessed.Add(1)
+
+		// Update average latency
+		latency := time.Since(startTime)
+		c.updateAvgLatency(latency)
 	case <-c.ctx.Done():
 		return
 	default:
-		// Queue full, drop or handle backpressure
+		// Queue full
+		c.server.opsErrors.Add(1)
 	}
 }
 
-// parseCommand parses Redis-style protocol (simple version)
-func (c *Connection) parseCommand(data []byte) (cmd, key string, value []byte, err error) {
-	// Simple parser for: SET key value\r\n or GET key\r\n
-	// In production, use proper RESP protocol parser
+// processSlowPath dispatches operation to worker pool
+func (c *Connection) processSlowPath(cmd, key string, value []byte, startTime time.Time) {
+	job := &Job{
+		conn:      c,
+		cmd:       cmd,
+		key:       key,
+		value:     value,
+		startTime: startTime,
+	}
 
-	parts := make([][]byte, 0, 3)
+	// Dispatch to worker pool
+	select {
+	case c.server.jobQueue <- job:
+		c.server.opsProcessed.Add(1)
+		c.server.opsSlowPath.Add(1)
+		c.opsProcessed.Add(1)
+	case <-c.ctx.Done():
+		return
+	default:
+		// Queue full - apply backpressure
+		c.sendError(fmt.Errorf("server busy"))
+		c.server.opsErrors.Add(1)
+	}
+}
+
+// processFastPathBatch handles batch operations inline (NATS-style)
+func (c *Connection) processFastPathBatch(cmd string, keys []string, values [][]byte, kvPairs map[string][]byte, startTime time.Time) {
+	var response []byte
+
+	switch cmd {
+	case "MSET":
+		for i, key := range keys {
+			err := c.server.store.Set(key, values[i], 0)
+			if err != nil {
+				c.sendError(err)
+				return
+			}
+		}
+		response = []byte("+OK\r\n")
+
+	case "MGET":
+		var results [][]byte
+		for _, key := range keys {
+			val, err := c.server.store.Get(key)
+			if err != nil {
+				c.sendError(err)
+				return
+			}
+			results = append(results, val)
+		}
+		response = formatBulkStrings(results)
+
+	case "MDEL":
+		for _, key := range keys {
+			err := c.server.store.Delete(key)
+			if err != nil {
+				c.sendError(err)
+				return
+			}
+		}
+		response = []byte("+OK\r\n")
+
+	default:
+		c.sendError(fmt.Errorf("unknown command"))
+		return
+	}
+
+	// Send response
+	select {
+	case c.outQueue <- response:
+		c.server.opsProcessed.Add(1)
+		c.server.opsFastPath.Add(1)
+		c.opsProcessed.Add(1)
+
+		// Update average latency
+		latency := time.Since(startTime)
+		c.updateAvgLatency(latency)
+	case <-c.ctx.Done():
+		return
+	default:
+		// Queue full
+		c.server.opsErrors.Add(1)
+		c.sendError(fmt.Errorf("server busy"))
+	}
+}
+
+// processSlowPathBatch dispatches batch operation to worker pool
+func (c *Connection) processSlowPathBatch(cmd string, keys []string, values [][]byte, kvPairs map[string][]byte, startTime time.Time) {
+	job := &Job{
+		conn:      c,
+		cmd:       cmd,
+		keys:      keys,
+		values:    values,
+		kvPairs:   kvPairs,
+		startTime: startTime,
+	}
+
+	// Dispatch to worker pool
+	select {
+	case c.server.jobQueue <- job:
+		c.server.opsProcessed.Add(1)
+		c.server.opsSlowPath.Add(1)
+		c.opsProcessed.Add(1)
+	case <-c.ctx.Done():
+		return
+	default:
+		// Queue full
+		c.server.opsErrors.Add(1)
+		c.sendError(fmt.Errorf("server busy"))
+	}
+}
+
+// updateAvgLatency updates the exponential moving average of latency
+func (c *Connection) updateAvgLatency(latency time.Duration) {
+	// Exponential moving average: new_avg = 0.9 * old_avg + 0.1 * new_value
+	oldAvg := c.avgLatency.Load()
+	newAvg := int64(float64(oldAvg)*0.9 + float64(latency.Nanoseconds())*0.1)
+	c.avgLatency.Store(newAvg)
+}
+
+// parseCommandExtended parses both single and batch operations
+func (c *Connection) parseCommandExtended(data []byte) (cmd, key string, value []byte, keys []string, values [][]byte, kvPairs map[string][]byte, err error) {
+	// Parse command parts
+	parts := make([][]byte, 0, 10)
 	start := 0
 
 	for i := 0; i < len(data); i++ {
@@ -288,34 +902,80 @@ func (c *Connection) parseCommand(data []byte) (cmd, key string, value []byte, e
 		parts = append(parts, data[start:])
 	}
 
-	if len(parts) < 2 {
-		return "", "", nil, fmt.Errorf("invalid command")
+	if len(parts) < 1 {
+		return "", "", nil, nil, nil, nil, fmt.Errorf("invalid command")
 	}
 
 	cmd = string(parts[0])
-	key = string(parts[1])
 
-	if len(parts) > 2 {
-		value = parts[2]
+	// Handle batch operations
+	switch cmd {
+	case "MSET":
+		// MSET key1 val1 key2 val2 ...
+		if len(parts) < 3 || len(parts)%2 == 0 {
+			return "", "", nil, nil, nil, nil, fmt.Errorf("MSET requires pairs of keys and values")
+		}
+		keys = make([]string, 0, (len(parts)-1)/2)
+		values = make([][]byte, 0, (len(parts)-1)/2)
+		for i := 1; i < len(parts); i += 2 {
+			keys = append(keys, string(parts[i]))
+			values = append(values, parts[i+1])
+		}
+		return cmd, "", nil, keys, values, nil, nil
+
+	case "MGET", "MDEL":
+		// MGET key1 key2 key3 ...
+		if len(parts) < 2 {
+			return "", "", nil, nil, nil, nil, fmt.Errorf("%s requires at least one key", cmd)
+		}
+		keys = make([]string, 0, len(parts)-1)
+		for i := 1; i < len(parts); i++ {
+			keys = append(keys, string(parts[i]))
+		}
+		return cmd, "", nil, keys, nil, nil, nil
+
+	default:
+		// Single operation
+		if len(parts) < 2 {
+			return "", "", nil, nil, nil, nil, fmt.Errorf("invalid command")
+		}
+		key = string(parts[1])
+		if len(parts) > 2 {
+			value = parts[2]
+		}
+		return cmd, key, value, nil, nil, nil, nil
 	}
+}
 
-	return cmd, key, value, nil
+// parseCommand parses Redis-style protocol (simple version) - kept for compatibility
+func (c *Connection) parseCommand(data []byte) (cmd, key string, value []byte, err error) {
+	cmdRet, keyRet, valueRet, _, _, _, errRet := c.parseCommandExtended(data)
+	return cmdRet, keyRet, valueRet, errRet
 }
 
 // formatBulkString formats response as Redis bulk string
-func (c *Connection) formatBulkString(data []byte) []byte {
+func formatBulkString(data []byte) []byte {
 	return []byte(fmt.Sprintf("$%d\r\n%s\r\n", len(data), data))
 }
 
+// formatBulkStrings formats multiple responses as Redis array
+func formatBulkStrings(dataList [][]byte) []byte {
+	result := fmt.Sprintf("*%d\r\n", len(dataList))
+	for _, data := range dataList {
+		result += fmt.Sprintf("$%d\r\n%s\r\n", len(data), data)
+	}
+	return []byte(result)
+}
+
 // formatError formats error response
-func (c *Connection) formatError(err error) []byte {
+func formatError(err error) []byte {
 	return []byte(fmt.Sprintf("-ERR %s\r\n", err.Error()))
 }
 
 // sendError sends error to client
 func (c *Connection) sendError(err error) {
 	select {
-	case c.outQueue <- c.formatError(err):
+	case c.outQueue <- formatError(err):
 	case <-c.ctx.Done():
 	default:
 	}
@@ -324,6 +984,12 @@ func (c *Connection) sendError(err error) {
 // Stop gracefully shuts down the server
 func (s *KVServer) Stop() error {
 	s.cancel()
+
+	// Close job queue
+	close(s.jobQueue)
+
+	// Wait for workers to finish
+	s.workerPool.wg.Wait()
 
 	// Close all connections
 	s.connections.Range(func(key, value interface{}) bool {
@@ -341,5 +1007,13 @@ func (s *KVServer) Stats() map[string]interface{} {
 	return map[string]interface{}{
 		"active_connections": s.activeConns.Load(),
 		"ops_processed":      s.opsProcessed.Load(),
+		"ops_fast_path":      s.opsFastPath.Load(),
+		"ops_slow_path":      s.opsSlowPath.Load(),
+		"ops_errors":         s.opsErrors.Load(),
+		"worker_pool_size":   s.workerPool.workers,
+		"active_workers":     s.workerPool.activeWorkers.Load(),
+		"jobs_processed":     s.workerPool.jobsProcessed.Load(),
+		"job_queue_len":      len(s.jobQueue),
+		"job_queue_cap":      cap(s.jobQueue),
 	}
 }
