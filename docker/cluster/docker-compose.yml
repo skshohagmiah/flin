@@ -1,0 +1,130 @@
+services:
+  # Node 1 - Bootstrap node
+  flin-node1:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: flin-node1
+    hostname: flin-node1
+    command: >
+      ./kvserver
+      -node-id=node1
+      -http=flin-node1:8080
+      -raft=flin-node1:9080
+      -port=:6380
+      -data=/data/node1
+      -partitions=64
+      -workers=256
+    ports:
+      - "6380:6380"
+      - "8080:8080"
+      - "9080:9080"
+    volumes:
+      - node1-data:/data
+    networks:
+      - flin-cluster
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  # Node 2 - Join node
+  flin-node2:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: flin-node2
+    hostname: flin-node2
+    command: >
+      ./kvserver
+      -node-id=node2
+      -http=flin-node2:8080
+      -raft=flin-node2:9080
+      -port=:6380
+      -data=/data/node2
+      -join=flin-node1:8080
+      -partitions=64
+    ports:
+      - "6381:6380"
+      - "8081:8080"
+      - "9081:9080"
+    volumes:
+      - node2-data:/data
+    networks:
+      - flin-cluster
+    depends_on:
+      flin-node1:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  # Node 3 - Join node
+  flin-node3:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: flin-node3
+    hostname: flin-node3
+    command: >
+      ./kvserver
+      -node-id=node3
+      -http=flin-node3:8080
+      -raft=flin-node3:9080
+      -port=:6380
+      -data=/data/node3
+      -join=flin-node1:8080
+      -partitions=64
+      -workers=256
+    ports:
+      - "6382:6380"
+      - "8082:8080"
+      - "9082:9080"
+    volumes:
+      - node3-data:/data
+    networks:
+      - flin-cluster
+    depends_on:
+      flin-node1:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  # Test runner (optional, use with --profile test)\
+  test-runner:
+    build:
+      context: ../..
+      dockerfile: docker/test-runner/Dockerfile
+    container_name: flin-test-runner
+    networks:
+      - flin-cluster
+    depends_on:
+      flin-node1:
+        condition: service_healthy
+      flin-node2:
+        condition: service_healthy
+      flin-node3:
+        condition: service_healthy
+    profiles:
+      - test
+
+networks:
+  flin-cluster:
+    driver: bridge
+
+volumes:
+  node1-data:
+  node2-data:
+  node3-data:

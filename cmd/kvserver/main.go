@@ -109,7 +109,6 @@ func main() {
 	if err := ck.Start(); err != nil {
 		log.Fatalf("Failed to start ClusterKit: %v", err)
 	}
-	defer ck.Stop()
 
 	log.Printf("✅ ClusterKit started")
 
@@ -128,6 +127,7 @@ func main() {
 		fmt.Println("\nShutting down server...")
 		srv.Stop()
 		ck.Stop()
+		store.Close()
 		os.Exit(0)
 	}()
 

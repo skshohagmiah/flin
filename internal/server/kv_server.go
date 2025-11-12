@@ -12,7 +12,7 @@ import (
 
 	"github.com/skshohagmiah/clusterkit"
 	"github.com/skshohagmiah/flin/internal/kv"
-	"github.com/skshohagmiah/flin/pkg/protocol"
+	"github.com/skshohagmiah/flin/internal/protocol"
 )
 
 // Buffer pool for connection buffers (32KB each)

@@ -29,7 +29,27 @@ A blazing-fast, distributed key-value store **and message queue** built with Go 
 
 ## 📦 Quick Start
 
-### Installation
+### 🐳 Docker (Recommended)
+
+**Single Node:**
+```bash
+cd docker/single && ./run.sh
+```
+
+**3-Node Cluster:**
+```bash
+cd docker/cluster && ./run.sh
+```
+
+Both scripts automatically:
+- Start the node(s)
+- Run performance benchmarks
+- Show throughput metrics
+- Leave cluster running for testing
+
+See [docker/README.md](docker/README.md) for details.
+
+### 💻 Local Installation
 
 ```bash
 git clone https://github.com/skshohagmiah/flin

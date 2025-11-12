@@ -1,0 +1,38 @@
+services:
+  flin-server:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: flin-single
+    hostname: flin-single
+    command: >
+      ./kvserver
+      -node-id=single-node
+      -http=flin-single:8080
+      -raft=flin-single:9080
+      -port=:6380
+      -data=/data
+      -partitions=64
+      -workers=256
+    ports:
+      - "6380:6380"
+      - "8080:8080"
+      - "9080:9080"
+    volumes:
+      - flin-data:/data
+    networks:
+      - flin-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+networks:
+  flin-net:
+    driver: bridge
+
+volumes:
+  flin-data:

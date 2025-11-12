@@ -1,0 +1,41 @@
+{
+  "name": "@flin/client",
+  "version": "1.0.0",
+  "description": "Official Node.js client SDK for Flin distributed key-value store with cluster-aware routing",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build",
+    "test": "jest",
+    "lint": "eslint src --ext .ts"
+  },
+  "keywords": [
+    "flin",
+    "kv",
+    "key-value",
+    "database",
+    "distributed",
+    "cache",
+    "storage",
+    "cluster"
+  ],
+  "author": "Flin Team",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/skshohagmiah/flin"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ]
+}
