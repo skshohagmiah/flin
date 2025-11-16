@@ -11,11 +11,11 @@ build: build-cli build-server
 
 build-cli:
 	@echo "Building CLI..."
-	@go build -o $(BINARY_CLI) ./cmd/flin
+	@go build -o $(BINARY_CLI) ./cmd/flincli
 
 build-server:
 	@echo "Building server..."
-	@go build -o $(BINARY_SERVER) ./cmd/kvserver
+	@go build -o $(BINARY_SERVER) ./cmd/server
 
 # Docker targets
 docker-build:
