@@ -111,7 +111,7 @@ start_server() {
     
     if [ ! -f "bin/flin-server" ]; then
         print_step "Building binary..."
-        if go build -o bin/flin-server ./cmd/server 2>&1 | grep -v "^#"; then
+        if go build -o bin/flin-server ./cmd/server; then
             print_success "Build successful"
         else
             print_error "Build failed"
@@ -409,6 +409,34 @@ print_summary() {
 }
 
 # ============================================================================
+# Data Seeding
+# ============================================================================
+
+seed_data() {
+    print_header "Seeding Demo Data"
+    
+    # Create queues
+    print_step "Creating demo queues..."
+    curl -s -X POST "$API_URL/queues/create" -H "Content-Type: application/json" -d '{"name":"orders:processed"}' > /dev/null
+    curl -s -X POST "$API_URL/queues/create" -H "Content-Type: application/json" -d '{"name":"notifications:email"}' > /dev/null
+    print_success "Created 'orders:processed' and 'notifications:email'"
+
+    # Push messages
+    print_step "Pushing messages..."
+    for i in {1..10}; do
+        curl -s -X POST "$API_URL/queues/push" -H "Content-Type: application/json" -d "{\"queue\":\"orders:processed\",\"message\":\"Order #$i processed at $(date)\"}" > /dev/null
+    done
+    print_success "Pushed 10 messages to 'orders:processed'"
+
+    # Set KV data
+    print_step "Setting KV pairs..."
+    curl -s -X POST "$API_URL/kv/set" -H "Content-Type: application/json" -d '{"key":"config:app_name","value":"Flin Studio Demo"}' > /dev/null
+    curl -s -X POST "$API_URL/kv/set" -H "Content-Type: application/json" -d '{"key":"user:admin:status","value":"active"}' > /dev/null
+    curl -s -X POST "$API_URL/kv/set" -H "Content-Type: application/json" -d '{"key":"stats:visits","value":"1024"}' > /dev/null
+    print_success "Set demo KV pairs"
+}
+
+# ============================================================================
 # Main Execution
 # ============================================================================
 
@@ -428,12 +456,18 @@ main() {
     # Run tests
     run_tests
     
+    # Seed data
+    seed_data
+    
     # Print summary
     print_summary
     RESULT=$?
     
-    print_header "Test Complete"
-    print_info "Server logs available at: /tmp/flin-server.log"
+    print_header "Server Running"
+    print_info "Server is still running at $API_URL"
+    print_info "You can now use Flin Studio at http://localhost:3000"
+    print_info "Press [ENTER] to stop the server and exit..."
+    read -r
     
     exit $RESULT
 }
