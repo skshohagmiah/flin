@@ -137,6 +137,20 @@ func main() {
 		log.Fatalf("Failed to create server: %v", err)
 	}
 
+	// Start HTTP API server in a goroutine
+	httpAPIAddr := ":8888" // Default HTTP API port
+	if envAPIPort := os.Getenv("API_PORT"); envAPIPort != "" {
+		httpAPIAddr = ":" + envAPIPort
+	}
+
+	httpServer := server.NewHTTPServer(srv, queueStore, httpAPIAddr)
+	go func() {
+		log.Printf("🌐 HTTP API Server starting on %s", httpAPIAddr)
+		if err := httpServer.Start(); err != nil {
+			log.Printf("❌ HTTP API Server error: %v", err)
+		}
+	}()
+
 	// Handle graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)

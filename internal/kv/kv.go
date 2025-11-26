@@ -15,6 +15,8 @@ type StorageBackend interface {
 	Incr(key string) error
 	Decr(key string) error
 	Scan(prefix string) ([][]byte, error)
+	ScanKeys(prefix string) ([]string, error)
+	ScanKeysWithValues(prefix string) (map[string][]byte, error)
 	BatchSet(kvPairs map[string][]byte, ttl time.Duration) error
 	BatchGet(keys []string) (map[string][]byte, error)
 	BatchDelete(keys []string) error
@@ -23,8 +25,8 @@ type StorageBackend interface {
 
 // KVStore is the developer-facing API for key-value operations
 type KVStore struct {
-	storage   StorageBackend
-	isMemory  bool
+	storage  StorageBackend
+	isMemory bool
 }
 
 // New creates a new KV store with BadgerDB backend at the specified path
@@ -96,6 +98,16 @@ func (k *KVStore) Exists(key string) (bool, error) {
 // Scan retrieves all values with keys matching the given prefix
 func (k *KVStore) Scan(prefix string) ([][]byte, error) {
 	return k.storage.Scan(prefix)
+}
+
+// ScanKeys retrieves all keys matching the given prefix
+func (k *KVStore) ScanKeys(prefix string) ([]string, error) {
+	return k.storage.ScanKeys(prefix)
+}
+
+// ScanKeysWithValues retrieves all keys and values matching the given prefix
+func (k *KVStore) ScanKeysWithValues(prefix string) (map[string][]byte, error) {
+	return k.storage.ScanKeysWithValues(prefix)
 }
 
 // BatchSet stores multiple key-value pairs in a single transaction

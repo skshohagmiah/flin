@@ -218,6 +218,61 @@ func (s *Storage) Scan(prefix string) ([][]byte, error) {
 	return values, err
 }
 
+// ScanKeys retrieves all keys matching the given prefix
+func (s *Storage) ScanKeys(prefix string) ([]string, error) {
+	var keys []string
+
+	err := s.db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.Prefix = []byte(prefix)
+
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		for it.Rewind(); it.Valid(); it.Next() {
+			item := it.Item()
+			key := string(item.Key())
+			keys = append(keys, key)
+		}
+
+		return nil
+	})
+
+	return keys, err
+}
+
+// ScanKeysWithValues retrieves all keys and their values matching the given prefix
+func (s *Storage) ScanKeysWithValues(prefix string) (map[string][]byte, error) {
+	kvPairs := make(map[string][]byte)
+
+	err := s.db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.Prefix = []byte(prefix)
+
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		for it.Rewind(); it.Valid(); it.Next() {
+			item := it.Item()
+			key := string(item.Key())
+			err := item.Value(func(val []byte) error {
+				// Make a copy of the value
+				valueCopy := make([]byte, len(val))
+				copy(valueCopy, val)
+				kvPairs[key] = valueCopy
+				return nil
+			})
+			if err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+
+	return kvPairs, err
+}
+
 // BatchSet stores multiple key-value pairs in a single transaction (optimized for throughput)
 func (s *Storage) BatchSet(kvPairs map[string][]byte, ttl time.Duration) error {
 	wb := s.db.NewWriteBatch()

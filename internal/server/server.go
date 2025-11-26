@@ -689,3 +689,13 @@ func (s *Server) Stats() map[string]interface{} {
 		"job_queue_cap":      cap(s.jobQueue),
 	}
 }
+
+// GetKVStore returns the KV store instance
+func (s *Server) GetKVStore() *kv.KVStore {
+	return s.store
+}
+
+// GetQueue returns the queue instance
+func (s *Server) GetQueue() *queue.Queue {
+	return s.queue
+}
