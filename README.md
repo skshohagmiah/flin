@@ -1,6 +1,6 @@
-# 🚀 Flin - High-Performance distributed data management system with KV Store + Message Queue + Streams (future)
+# 🚀 Flin - High-Performance distributed data management system
 
-A blazing-fast, distributed key-value store **and message queue** built with Go that **outperforms Redis by 2-8x**.
+A blazing-fast, distributed key-value store | message queue | stream pub/sub data management system.
 
 ## ⚡ Performance Highlights
 
