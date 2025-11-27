@@ -9,7 +9,7 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR/.."
 
 # Configuration
-CONCURRENCY=${1:-64}
+CONCURRENCY=${1:-256}
 DURATION=${2:-10}
 VALUE_SIZE=${3:-1024}
 

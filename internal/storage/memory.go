@@ -179,6 +179,47 @@ func (m *MemoryStorage) Scan(prefix string) ([][]byte, error) {
 	return values, nil
 }
 
+// ScanKeys retrieves all keys matching the prefix
+func (m *MemoryStorage) ScanKeys(prefix string) ([]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var keys []string
+	for key, entry := range m.data {
+		if len(key) >= len(prefix) && key[:len(prefix)] == prefix {
+			// Check expiration
+			if entry.hasExpiry && time.Now().After(entry.expiration) {
+				continue
+			}
+			keys = append(keys, key)
+		}
+	}
+
+	return keys, nil
+}
+
+// ScanKeysWithValues retrieves all keys and values matching the prefix
+func (m *MemoryStorage) ScanKeysWithValues(prefix string) (map[string][]byte, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	kvPairs := make(map[string][]byte)
+	for key, entry := range m.data {
+		if len(key) >= len(prefix) && key[:len(prefix)] == prefix {
+			// Check expiration
+			if entry.hasExpiry && time.Now().After(entry.expiration) {
+				continue
+			}
+
+			valueCopy := make([]byte, len(entry.value))
+			copy(valueCopy, entry.value)
+			kvPairs[key] = valueCopy
+		}
+	}
+
+	return kvPairs, nil
+}
+
 // BatchSet stores multiple key-value pairs atomically
 func (m *MemoryStorage) BatchSet(kvPairs map[string][]byte, ttl time.Duration) error {
 	m.mu.Lock()

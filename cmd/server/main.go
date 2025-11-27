@@ -11,6 +11,7 @@ import (
 
 	"github.com/skshohagmiah/clusterkit"
 	"github.com/skshohagmiah/flin/internal/kv"
+	"github.com/skshohagmiah/flin/internal/queue"
 	"github.com/skshohagmiah/flin/internal/server"
 )
 
@@ -21,6 +22,7 @@ var (
 	joinAddr       = flag.String("join", "", "Address of node to join (empty for bootstrap)")
 	dataDir        = flag.String("data", "./data", "Data directory")
 	kvPort         = flag.String("port", ":6380", "KV server port")
+	queuePort      = flag.String("queue-port", ":6381", "Queue server port")
 	partitionCount = flag.Int("partitions", 64, "Number of partitions")
 	workerCount    = flag.Int("workers", 64, "Number of worker goroutines")
 	useMemory      = flag.Bool("memory", false, "Use in-memory storage (like Redis)")
@@ -37,15 +39,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Println("🚀 Flin Distributed KV Store")
+	fmt.Println("🚀 Flin Distributed KV Store + Queue")
 	fmt.Println("   - ClusterKit coordination")
 	fmt.Println("   - Raft consensus")
 	fmt.Println("   - Automatic partitioning & replication")
 	fmt.Println()
-	fmt.Printf("   Node ID:  %s\n", *nodeID)
-	fmt.Printf("   HTTP:     %s\n", *httpAddr)
-	fmt.Printf("   Raft:     %s\n", *raftAddr)
-	fmt.Printf("   KV Port:  %s\n", *kvPort)
+	fmt.Printf("   Node ID:     %s\n", *nodeID)
+	fmt.Printf("   HTTP:        %s\n", *httpAddr)
+	fmt.Printf("   Raft:        %s\n", *raftAddr)
+	fmt.Printf("   KV Port:     %s\n", *kvPort)
+	fmt.Printf("   Queue Port:  %s\n", *queuePort)
 
 	if *useMemory {
 		fmt.Printf("   Storage:  IN-MEMORY (like Redis)\n")
@@ -82,6 +85,15 @@ func main() {
 	}
 	defer store.Close()
 
+	// Create Queue store (always disk-based)
+	queueDataDir := *dataDir + "/queue"
+	fmt.Printf("📦 Creating disk-based Queue store at %s...\n", queueDataDir)
+	queueStore, err := queue.New(queueDataDir)
+	if err != nil {
+		log.Fatalf("Failed to create queue store: %v", err)
+	}
+	defer queueStore.Close()
+
 	// Create ClusterKit instance
 	ckOptions := clusterkit.Options{
 		NodeID:            *nodeID,
@@ -112,11 +124,32 @@ func main() {
 
 	log.Printf("✅ ClusterKit started")
 
-	// Create KV server with custom worker count
-	srv, err := server.NewKVServerWithWorkers(store, ck, *kvPort, *nodeID, *workerCount)
+	// Initialize unified server (KV + Queue)
+	srv, err := server.NewServerWithWorkers(
+		store,
+		queueStore,
+		ck,
+		*kvPort,
+		*nodeID,
+		*workerCount,
+	)
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
 	}
+
+	// Start HTTP API server in a goroutine
+	httpAPIAddr := ":8888" // Default HTTP API port
+	if envAPIPort := os.Getenv("API_PORT"); envAPIPort != "" {
+		httpAPIAddr = ":" + envAPIPort
+	}
+
+	httpServer := server.NewHTTPServer(srv, queueStore, httpAPIAddr)
+	go func() {
+		log.Printf("🌐 HTTP API Server starting on %s", httpAPIAddr)
+		if err := httpServer.Start(); err != nil {
+			log.Printf("❌ HTTP API Server error: %v", err)
+		}
+	}()
 
 	// Handle graceful shutdown
 	sigChan := make(chan os.Signal, 1)
@@ -128,11 +161,12 @@ func main() {
 		srv.Stop()
 		ck.Stop()
 		store.Close()
+		queueStore.Close()
 		os.Exit(0)
 	}()
 
-	// Start server
-	log.Printf("🚀 KV server listening on %s", *kvPort)
+	// Start server (handles both KV and Queue on same port)
+	log.Printf("🚀 Server listening on %s (KV + Queue)", *kvPort)
 	if err := srv.Start(); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
