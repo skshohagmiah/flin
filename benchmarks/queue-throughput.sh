@@ -71,7 +71,7 @@ require github.com/skshohagmiah/flin v0.0.0
 replace github.com/skshohagmiah/flin => $SCRIPT_DIR/..
 MODEOF
 
-cat > main.go << 'EOF'
+cat > main.go << EOF
 package main
 
 import (
@@ -84,22 +84,22 @@ import (
 )
 
 func main() {
-	concurrency := CONCURRENCY_PLACEHOLDER
-	duration := DURATION_PLACEHOLDER * time.Second
-	valueSize := VALUE_SIZE_PLACEHOLDER
+	concurrency := $CONCURRENCY
+	duration := $DURATION * time.Second
+	valueSize := $VALUE_SIZE
 
-	fmt.Printf("Unified server (KV + Queue): localhost:7380\n")
+	fmt.Printf("Unified server (KV + Queue): localhost:7380\\n")
 	fmt.Println()
 
 	// Create client using real SDK (supports connection pooling)
 	opts := flin.DefaultOptions("localhost:7380")
 	// Ensure pool is large enough for all workers
-	opts.MaxConnectionsPerNode = concurrency + 10
-	opts.MinConnectionsPerNode = concurrency / 2
+	opts.MaxConnections = concurrency + 10
+	opts.MinConnections = concurrency / 2
 	
 	client, err := flin.NewClient(opts)
 	if err != nil {
-		fmt.Printf("Failed to create client: %v\n", err)
+		fmt.Printf("Failed to create client: %v\\n", err)
 		return
 	}
 	defer client.Close()
@@ -161,9 +161,9 @@ func main() {
 		pushTotalStr = fmt.Sprintf("%d", pushTotal)
 	}
 
-	fmt.Printf("   Operations:  %s\n", pushTotalStr)
-	fmt.Printf("   Throughput:  %s ops/sec\n", pushThroughputStr)
-	fmt.Printf("   Latency:     %.2fμs\n", pushLatency)
+	fmt.Printf("   Operations:  %s\\n", pushTotalStr)
+	fmt.Printf("   Throughput:  %s ops/sec\\n", pushThroughputStr)
+	fmt.Printf("   Latency:     %.2fμs\\n", pushLatency)
 	fmt.Println()
 
 	// Run POP test
@@ -219,16 +219,16 @@ func main() {
 		popTotalStr = fmt.Sprintf("%d", popTotal)
 	}
 
-	fmt.Printf("   Operations:  %s\n", popTotalStr)
-	fmt.Printf("   Throughput:  %s ops/sec\n", popThroughputStr)
-	fmt.Printf("   Latency:     %.2fμs\n", popLatency)
+	fmt.Printf("   Operations:  %s\\n", popTotalStr)
+	fmt.Printf("   Throughput:  %s ops/sec\\n", popThroughputStr)
+	fmt.Printf("   Latency:     %.2fμs\\n", popLatency)
 	fmt.Println()
 
 	// Summary
 	fmt.Println("📊 Summary")
 	fmt.Println("===================")
-	fmt.Printf("   PUSH:  %s ops/sec (%.2fμs latency)\n", pushThroughputStr, pushLatency)
-	fmt.Printf("   POP:   %s ops/sec (%.2fμs latency)\n", popThroughputStr, popLatency)
+	fmt.Printf("   PUSH:  %s ops/sec (%.2fμs latency)\\n", pushThroughputStr, pushLatency)
+	fmt.Printf("   POP:   %s ops/sec (%.2fμs latency)\\n", popThroughputStr, popLatency)
 
 	avgThroughput := (pushThroughput + popThroughput) / 2
 	var avgThroughputStr string
@@ -239,14 +239,9 @@ func main() {
 	} else {
 		avgThroughputStr = fmt.Sprintf("%.0f", avgThroughput)
 	}
-	fmt.Printf("   Average: %s ops/sec 🚀\n", avgThroughputStr)
+	fmt.Printf("   Average: %s ops/sec 🚀\\n", avgThroughputStr)
 }
 EOF
-
-# Replace placeholders
-sed -i '' "s/CONCURRENCY_PLACEHOLDER/$CONCURRENCY/g" main.go
-sed -i '' "s/DURATION_PLACEHOLDER/$DURATION/g" main.go
-sed -i '' "s/VALUE_SIZE_PLACEHOLDER/$VALUE_SIZE/g" main.go
 
 echo "📊 Running queue throughput benchmark..."
 echo ""

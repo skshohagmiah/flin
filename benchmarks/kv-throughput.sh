@@ -97,7 +97,7 @@ func main() {
 	}
 	defer client.Close()
 	
-	fmt.Printf("Client mode: %s\n", map[bool]string{true: "Cluster", false: "Single-node"}[client.IsClusterMode()])
+	fmt.Println("Client connected successfully")
 	fmt.Println()
 	
 	// Prepare test data
@@ -124,7 +124,7 @@ func main() {
 			ops := int64(0)
 			for time.Now().Before(stopTime) {
 				key := fmt.Sprintf("key_%d_%d", workerID, ops)
-				if err := client.Set(key, value); err == nil {
+				if err := client.KV.Set(key, value); err == nil {
 					ops++
 				}
 			}
@@ -179,7 +179,7 @@ func main() {
 			ops := int64(0)
 			for time.Now().Before(stopTime) {
 				key := fmt.Sprintf("key_%d_%d", workerID, ops%1000)
-				if _, err := client.Get(key); err == nil {
+				if _, err := client.KV.Get(key); err == nil {
 					ops++
 				}
 			}

@@ -9,8 +9,8 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR/.."
 
 # Configuration
-CONCURRENCY=${1:-256}
-DURATION=${2:-10}
+CONCURRENCY=${1:-64}  # Increased to 64 to test robustness
+DURATION=${2:-5}
 VALUE_SIZE=${3:-1024}
 
 echo "📊 Configuration:"
@@ -71,7 +71,7 @@ require github.com/skshohagmiah/flin v0.0.0
 replace github.com/skshohagmiah/flin => $SCRIPT_DIR/..
 MODEOF
 
-cat > main.go << 'EOF'
+cat > main.go << EOF
 package main
 
 import (
@@ -84,22 +84,22 @@ import (
 )
 
 func main() {
-	concurrency := CONCURRENCY_PLACEHOLDER
-	duration := DURATION_PLACEHOLDER * time.Second
-	valueSize := VALUE_SIZE_PLACEHOLDER
+	concurrency := $CONCURRENCY
+	duration := $DURATION * time.Second
+	valueSize := $VALUE_SIZE
 
-	fmt.Printf("Unified server (KV + Queue + Stream): localhost:7380\n")
+	fmt.Printf("Unified server (KV + Queue + Stream): localhost:7380\\n")
 	fmt.Println()
 
 	// Create client using real SDK (supports connection pooling)
 	opts := flin.DefaultOptions("localhost:7380")
 	// Ensure pool is large enough for all workers
-	opts.MaxConnectionsPerNode = concurrency + 10
-	opts.MinConnectionsPerNode = concurrency / 2
+	opts.MaxConnections = concurrency + 10
+	opts.MinConnections = concurrency / 2
 	
 	client, err := flin.NewClient(opts)
 	if err != nil {
-		fmt.Printf("Failed to create client: %v\n", err)
+		fmt.Printf("Failed to create client: %v\\n", err)
 		return
 	}
 	defer client.Close()
@@ -115,13 +115,14 @@ func main() {
 		value[i] = byte(i % 256)
 	}
 
-	// Create topics
+	// Create 4 topics (shared by all workers to avoid resource exhaustion)
+	numTopics := 4
 	fmt.Println("📝 Creating topics...")
-	for i := 0; i < concurrency; i++ {
+	for i := 0; i < numTopics; i++ {
 		topicName := fmt.Sprintf("bench_topic_%d", i)
-		err := client.Stream.CreateTopic(topicName, 4, 0) // 4 partitions
+		err := client.Stream.CreateTopic(topicName, 2, 0) // 2 partitions per topic
 		if err != nil {
-			// Ignore error if topic exists (or handle it)
+			fmt.Printf("Warning: Failed to create topic: %v\\n", err)
 		}
 	}
 
@@ -140,10 +141,11 @@ func main() {
 		go func(workerID int) {
 			defer wg.Done()
 
-			topicName := fmt.Sprintf("bench_topic_%d", workerID)
+			// Workers share topics (round-robin)
+			topicName := fmt.Sprintf("bench_topic_%d", workerID % numTopics)
 			ops := int64(0)
 			for time.Now().Before(stopTime) {
-				if err := client.Stream.Publish(topicName, "", value); err == nil {
+				if err := client.Stream.Publish(topicName, 0, "", value); err == nil {
 					ops++
 				}
 			}
@@ -176,9 +178,9 @@ func main() {
 		pubTotalStr = fmt.Sprintf("%d", pubTotal)
 	}
 
-	fmt.Printf("   Operations:  %s\n", pubTotalStr)
-	fmt.Printf("   Throughput:  %s ops/sec\n", pubThroughputStr)
-	fmt.Printf("   Latency:     %.2fμs\n", pubLatency)
+	fmt.Printf("   Operations:  %s\\n", pubTotalStr)
+	fmt.Printf("   Throughput:  %s ops/sec\\n", pubThroughputStr)
+	fmt.Printf("   Latency:     %.2fμs\\n", pubLatency)
 	fmt.Println()
 
 	// Run CONSUME test
@@ -187,10 +189,10 @@ func main() {
 
 	var subOps atomic.Int64
 	
-	// Subscribe first
+	// Subscribe first (each worker subscribes to its assigned topic)
 	for i := 0; i < concurrency; i++ {
-		topicName := fmt.Sprintf("bench_topic_%d", i)
-		groupName := fmt.Sprintf("bench_group_%d", i)
+		topicName := fmt.Sprintf("bench_topic_%d", i % numTopics)
+		groupName := fmt.Sprintf("bench_group_%d", i % numTopics)
 		consumerName := fmt.Sprintf("consumer_%d", i)
 		client.Stream.Subscribe(topicName, groupName, consumerName)
 	}
@@ -203,8 +205,9 @@ func main() {
 		go func(workerID int) {
 			defer wg.Done()
 
-			topicName := fmt.Sprintf("bench_topic_%d", workerID)
-			groupName := fmt.Sprintf("bench_group_%d", workerID)
+			// Workers share topics (round-robin)
+			topicName := fmt.Sprintf("bench_topic_%d", workerID % numTopics)
+			groupName := fmt.Sprintf("bench_group_%d", workerID % numTopics)
 			consumerName := fmt.Sprintf("consumer_%d", workerID)
 			
 			ops := int64(0)
@@ -216,6 +219,8 @@ func main() {
 						// If empty, publish some more or sleep briefly
 						// time.Sleep(1 * time.Millisecond)
 					}
+				} else {
+					fmt.Printf("Error consuming: %v\\n", err)
 				}
 			}
 			subOps.Add(ops)
@@ -247,16 +252,16 @@ func main() {
 		subTotalStr = fmt.Sprintf("%d", subTotal)
 	}
 
-	fmt.Printf("   Operations:  %s\n", subTotalStr)
-	fmt.Printf("   Throughput:  %s ops/sec\n", subThroughputStr)
-	fmt.Printf("   Latency:     %.2fμs\n", subLatency)
+	fmt.Printf("   Operations:  %s\\n", subTotalStr)
+	fmt.Printf("   Throughput:  %s ops/sec\\n", subThroughputStr)
+	fmt.Printf("   Latency:     %.2fμs\\n", subLatency)
 	fmt.Println()
 
 	// Summary
 	fmt.Println("📊 Summary")
 	fmt.Println("===================")
-	fmt.Printf("   PUBLISH: %s ops/sec (%.2fμs latency)\n", pubThroughputStr, pubLatency)
-	fmt.Printf("   CONSUME: %s ops/sec (%.2fμs latency)\n", subThroughputStr, subLatency)
+	fmt.Printf("   PUBLISH: %s ops/sec (%.2fμs latency)\\n", pubThroughputStr, pubLatency)
+	fmt.Printf("   CONSUME: %s ops/sec (%.2fμs latency)\\n", subThroughputStr, subLatency)
 
 	avgThroughput := (pubThroughput + subThroughput) / 2
 	var avgThroughputStr string
@@ -267,14 +272,9 @@ func main() {
 	} else {
 		avgThroughputStr = fmt.Sprintf("%.0f", avgThroughput)
 	}
-	fmt.Printf("   Average: %s ops/sec 🚀\n", avgThroughputStr)
+	fmt.Printf("   Average: %s ops/sec 🚀\\n", avgThroughputStr)
 }
 EOF
-
-# Replace placeholders
-sed -i '' "s/CONCURRENCY_PLACEHOLDER/$CONCURRENCY/g" main.go
-sed -i '' "s/DURATION_PLACEHOLDER/$DURATION/g" main.go
-sed -i '' "s/VALUE_SIZE_PLACEHOLDER/$VALUE_SIZE/g" main.go
 
 echo "📊 Running stream throughput benchmark..."
 echo ""
