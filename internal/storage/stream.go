@@ -17,7 +17,7 @@ import (
 //   - Topic metadata: stream:meta:{topic}
 type StreamStorage struct {
 	db *badger.DB
-	
+
 	// Per-partition locks to reduce contention
 	// Key: "topic:partition"
 	partitionLocks map[string]*sync.RWMutex
@@ -56,12 +56,12 @@ type ConsumerOffset struct {
 func NewStreamStorage(path string) (*StreamStorage, error) {
 	opts := badger.DefaultOptions(path)
 	opts.Logger = nil // Disable badger logging
-	
+
 	// Optimize for high throughput scenarios
-	opts.NumVersionsToKeep = 1              // Only keep 1 version (no MVCC overhead)
-	opts.CompactL0OnClose = true            // Compact L0 on close to improve reads
-	opts.NumMemtables = 5                   // More memtables for concurrent writes
-	opts.MemTableSize = 64 << 20            // 64MB memtables
+	opts.NumVersionsToKeep = 1   // Only keep 1 version (no MVCC overhead)
+	opts.CompactL0OnClose = true // Compact L0 on close to improve reads
+	opts.NumMemtables = 5        // More memtables for concurrent writes
+	opts.MemTableSize = 64 << 20 // 64MB memtables
 
 	db, err := badger.Open(opts)
 	if err != nil {
@@ -79,7 +79,7 @@ func (s *StreamStorage) getPartitionLock(topic string, partition int) *sync.RWMu
 	key := fmt.Sprintf("%s:%d", topic, partition)
 	s.partitionMu.Lock()
 	defer s.partitionMu.Unlock()
-	
+
 	lock, exists := s.partitionLocks[key]
 	if !exists {
 		lock = &sync.RWMutex{}
