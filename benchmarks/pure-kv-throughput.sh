@@ -35,7 +35,7 @@ replace github.com/skshohagmiah/flin => REPLACE_PATH
 MODEOF
 
 # Replace the path
-sed -i '' "s|REPLACE_PATH|$SCRIPT_DIR/..|g" go.mod
+sed -i "s|REPLACE_PATH|$SCRIPT_DIR/..|g" go.mod
 
 cat > main.go << 'EOF'
 package main
@@ -213,9 +213,9 @@ func main() {
 EOF
 
 # Replace placeholders
-sed -i '' "s/CONCURRENCY_VAL/$CONCURRENCY/g" main.go
-sed -i '' "s/DURATION_VAL/$DURATION/g" main.go
-sed -i '' "s/VALUE_SIZE_VAL/$VALUE_SIZE/g" main.go
+sed -i "s/CONCURRENCY_VAL/$CONCURRENCY/g" main.go
+sed -i "s/DURATION_VAL/$DURATION/g" main.go
+sed -i "s/VALUE_SIZE_VAL/$VALUE_SIZE/g" main.go
 
 echo "📊 Running pure KV benchmark..."
 echo ""

@@ -415,6 +415,8 @@ func DecodeRequest(data []byte) (*Request, error) {
 		return decodeDocUpdateRequest(payload)
 	case OpDocDelete:
 		return decodeDocDeleteRequest(payload)
+	case OpDocIndex:
+		return decodeDocIndexRequest(payload)
 	default:
 		return nil, fmt.Errorf("unknown opcode: %d", req.OpCode)
 	}
@@ -973,6 +975,35 @@ func EncodeDocFindRequest(collection string, query []byte) []byte {
 	return buf
 }
 
+// EncodeDocIndexRequest encodes a DOCINDEX request to create an index
+func EncodeDocIndexRequest(collection string, field string) []byte {
+	collLen := len(collection)
+	fieldLen := len(field)
+
+	// Format: [1:opcode][4:payloadLen][2:collLen][collection][2:fieldLen][field]
+	totalSize := 1 + 4 + 2 + collLen + 2 + fieldLen
+	buf := make([]byte, totalSize)
+
+	pos := 0
+	buf[pos] = OpDocIndex
+	pos++
+
+	payloadLen := totalSize - 5
+	binary.BigEndian.PutUint32(buf[pos:], uint32(payloadLen))
+	pos += 4
+
+	binary.BigEndian.PutUint16(buf[pos:], uint16(collLen))
+	pos += 2
+	copy(buf[pos:], collection)
+	pos += collLen
+
+	binary.BigEndian.PutUint16(buf[pos:], uint16(fieldLen))
+	pos += 2
+	copy(buf[pos:], field)
+
+	return buf
+}
+
 // EncodeDocUpdateRequest encodes a DOCUPDATE request
 func EncodeDocUpdateRequest(collection string, updateOpts []byte) []byte {
 	collLen := len(collection)
@@ -1419,6 +1450,37 @@ func decodeDocDeleteRequest(payload []byte) (*Request, error) {
 		return nil, fmt.Errorf("invalid DOCDELETE payload")
 	}
 	req.Value = payload[pos : pos+queryLen]
+
+	return req, nil
+}
+
+func decodeDocIndexRequest(payload []byte) (*Request, error) {
+	if len(payload) < 2 {
+		return nil, fmt.Errorf("invalid DOCINDEX payload")
+	}
+
+	req := &Request{OpCode: OpDocIndex}
+	pos := 0
+
+	// Collection
+	collLen := int(binary.BigEndian.Uint16(payload[pos:]))
+	pos += 2
+	if len(payload) < pos+collLen {
+		return nil, fmt.Errorf("invalid DOCINDEX payload")
+	}
+	req.Collection = string(payload[pos : pos+collLen])
+	pos += collLen
+
+	// Field (stored in Key)
+	if len(payload) < pos+2 {
+		return nil, fmt.Errorf("invalid DOCINDEX payload")
+	}
+	fieldLen := int(binary.BigEndian.Uint16(payload[pos:]))
+	pos += 2
+	if len(payload) < pos+fieldLen {
+		return nil, fmt.Errorf("invalid DOCINDEX payload")
+	}
+	req.Key = string(payload[pos : pos+fieldLen])
 
 	return req, nil
 }
