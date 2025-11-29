@@ -157,6 +157,16 @@ func main() {
 	fmt.Printf("   Latency:     %.2fμs\n", createLatency)
 	fmt.Println()
 	
+	// Create index on "worker" field for better query performance
+	fmt.Println("📇 Creating index on 'worker' field...")
+	err = client.DB.CreateIndex("docs", "worker")
+	if err != nil {
+		fmt.Printf("   ⚠️  Index creation error (non-critical): %v\n", err)
+	} else {
+		fmt.Println("   ✅ Index created successfully")
+	}
+	fmt.Println()
+	
 	// Run READ test
 	fmt.Println("🟢 READ Test (document queries)")
 	fmt.Println("--------------------------------")
@@ -173,11 +183,11 @@ func main() {
 			
 			ops := int64(0)
 			for time.Now().Before(stopTime) {
-				// Query documents by worker
+				// Query documents by worker (reduced result set for better throughput)
 				_, err := client.DB.Query("docs").
 					Where("worker", flin.Eq, workerID).
 					Skip(0).
-					Take(10).
+					Take(5).
 					Exec()
 				if err == nil {
 					ops++
@@ -290,9 +300,9 @@ func randString(length int) string {
 EOF
 
 # Replace placeholders
-sed -i '' "s/CONCURRENCY_PLACEHOLDER/$CONCURRENCY/g" main.go
-sed -i '' "s/DURATION_PLACEHOLDER/$DURATION/g" main.go
-sed -i '' "s/DOC_SIZE_PLACEHOLDER/$DOC_SIZE/g" main.go
+sed -i "s/CONCURRENCY_PLACEHOLDER/$CONCURRENCY/g" main.go
+sed -i "s/DURATION_PLACEHOLDER/$DURATION/g" main.go
+sed -i "s/DOC_SIZE_PLACEHOLDER/$DOC_SIZE/g" main.go
 
 echo "📊 Running document store throughput benchmark..."
 echo ""

@@ -17,7 +17,11 @@ import (
 //   - Topic metadata: stream:meta:{topic}
 type StreamStorage struct {
 	db *badger.DB
-	mu sync.RWMutex
+
+	// Per-partition locks to reduce contention
+	// Key: "topic:partition"
+	partitionLocks map[string]*sync.RWMutex
+	partitionMu    sync.Mutex // Only lock for partition map access
 }
 
 // Message represents a stream message
@@ -53,20 +57,43 @@ func NewStreamStorage(path string) (*StreamStorage, error) {
 	opts := badger.DefaultOptions(path)
 	opts.Logger = nil // Disable badger logging
 
+	// Optimize for high throughput scenarios
+	opts.NumVersionsToKeep = 1   // Only keep 1 version (no MVCC overhead)
+	opts.CompactL0OnClose = true // Compact L0 on close to improve reads
+	opts.NumMemtables = 5        // More memtables for concurrent writes
+	opts.MemTableSize = 64 << 20 // 64MB memtables
+
 	db, err := badger.Open(opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open badger: %w", err)
 	}
 
 	return &StreamStorage{
-		db: db,
+		db:             db,
+		partitionLocks: make(map[string]*sync.RWMutex),
 	}, nil
+}
+
+// getPartitionLock returns the lock for a topic:partition pair
+func (s *StreamStorage) getPartitionLock(topic string, partition int) *sync.RWMutex {
+	key := fmt.Sprintf("%s:%d", topic, partition)
+	s.partitionMu.Lock()
+	defer s.partitionMu.Unlock()
+
+	lock, exists := s.partitionLocks[key]
+	if !exists {
+		lock = &sync.RWMutex{}
+		s.partitionLocks[key] = lock
+	}
+	return lock
 }
 
 // AppendMessage appends a message to a topic partition and returns the assigned offset
 func (s *StreamStorage) AppendMessage(topic string, partition int, key string, value []byte) (int64, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// Use per-partition lock instead of global lock
+	partLock := s.getPartitionLock(topic, partition)
+	partLock.Lock()
+	defer partLock.Unlock()
 
 	var offset int64
 	err := s.db.Update(func(txn *badger.Txn) error {
@@ -113,8 +140,10 @@ func (s *StreamStorage) AppendMessage(topic string, partition int, key string, v
 
 // FetchMessages retrieves messages from a topic partition starting at the given offset
 func (s *StreamStorage) FetchMessages(topic string, partition int, startOffset int64, maxCount int) ([]*Message, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	// Use per-partition lock instead of global lock
+	partLock := s.getPartitionLock(topic, partition)
+	partLock.RLock()
+	defer partLock.RUnlock()
 
 	messages := make([]*Message, 0, maxCount)
 
@@ -153,8 +182,10 @@ func (s *StreamStorage) FetchMessages(topic string, partition int, startOffset i
 
 // GetOffset returns the current offset for a topic partition
 func (s *StreamStorage) GetOffset(topic string, partition int) (int64, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	// Use per-partition lock instead of global lock
+	partLock := s.getPartitionLock(topic, partition)
+	partLock.RLock()
+	defer partLock.RUnlock()
 
 	var offset int64 = -1
 	err := s.db.View(func(txn *badger.Txn) error {
@@ -176,8 +207,10 @@ func (s *StreamStorage) GetOffset(topic string, partition int) (int64, error) {
 
 // CommitOffset stores the consumer group's offset for a topic partition
 func (s *StreamStorage) CommitOffset(group, topic string, partition int, offset int64) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// Use per-partition lock instead of global lock
+	partLock := s.getPartitionLock(topic, partition)
+	partLock.Lock()
+	defer partLock.Unlock()
 
 	return s.db.Update(func(txn *badger.Txn) error {
 		key := makeConsumerOffsetKey(group, topic, partition)
@@ -190,8 +223,10 @@ func (s *StreamStorage) CommitOffset(group, topic string, partition int, offset 
 
 // GetConsumerOffset retrieves the consumer group's offset for a topic partition
 func (s *StreamStorage) GetConsumerOffset(group, topic string, partition int) (int64, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	// Use per-partition lock instead of global lock
+	partLock := s.getPartitionLock(topic, partition)
+	partLock.RLock()
+	defer partLock.RUnlock()
 
 	var offset int64 = 0
 	err := s.db.View(func(txn *badger.Txn) error {
@@ -213,9 +248,8 @@ func (s *StreamStorage) GetConsumerOffset(group, topic string, partition int) (i
 
 // CreateTopic stores topic metadata
 func (s *StreamStorage) CreateTopic(meta *TopicMetadata) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
+	// No partition-specific lock needed for topic metadata
+	// (topic creation is infrequent)
 	return s.db.Update(func(txn *badger.Txn) error {
 		key := makeTopicMetaKey(meta.Name)
 		data := encodeTopicMetadata(meta)
@@ -225,9 +259,8 @@ func (s *StreamStorage) CreateTopic(meta *TopicMetadata) error {
 
 // GetTopicMetadata retrieves topic metadata
 func (s *StreamStorage) GetTopicMetadata(topic string) (*TopicMetadata, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
+	// No partition-specific lock needed for topic metadata
+	// (reading metadata is cheap and infrequent)
 	var meta *TopicMetadata
 	err := s.db.View(func(txn *badger.Txn) error {
 		key := makeTopicMetaKey(topic)
@@ -245,8 +278,10 @@ func (s *StreamStorage) GetTopicMetadata(topic string) (*TopicMetadata, error) {
 
 // DeleteOldMessages removes messages older than retention policy
 func (s *StreamStorage) DeleteOldMessages(topic string, partition int, retentionMs int64) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// Use per-partition lock instead of global lock
+	partLock := s.getPartitionLock(topic, partition)
+	partLock.Lock()
+	defer partLock.Unlock()
 
 	cutoffTime := time.Now().UnixMilli() - retentionMs
 	deleted := 0

@@ -258,6 +258,39 @@ func buildFindOptions(queryData map[string]interface{}) db.FindOptions {
 	return opts
 }
 
+// processBinaryDocIndex handles document index creation operations
+func (c *Connection) processBinaryDocIndex(req *protocol.Request, startTime time.Time) {
+	log.Printf("[DOC] INDEX start: collection=%s, field=%s", req.Collection, req.Key)
+
+	docStore := c.server.db
+	if docStore == nil {
+		log.Printf("[DOC] INDEX error: document store not available")
+		c.sendBinaryError(fmt.Errorf("document store not available"))
+		c.server.opsErrors.Add(1)
+		return
+	}
+
+	// Create index on the specified field
+	err := docStore.CreateIndex(req.Collection, req.Key)
+	if err != nil {
+		log.Printf("[DOC] INDEX error: %v", err)
+		c.sendBinaryError(err)
+		c.server.opsErrors.Add(1)
+		return
+	}
+
+	duration := time.Since(startTime)
+	log.Printf("[DOC] INDEX complete: collection=%s, field=%s, duration=%v", req.Collection, req.Key, duration)
+
+	// Send success response
+	response := protocol.EncodeValueResponse([]byte("OK"))
+	select {
+	case c.outQueue <- response:
+		c.server.opsProcessed.Add(1)
+	case <-c.ctx.Done():
+	}
+}
+
 func toString(val interface{}) string {
 	switch v := val.(type) {
 	case string:

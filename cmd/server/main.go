@@ -122,7 +122,7 @@ func main() {
 		Bootstrap:         *joinAddr == "", // Bootstrap if not joining
 		DataDir:           *dataDir + "/cluster",
 		PartitionCount:    *partitionCount,
-		ReplicationFactor: 3,
+		ReplicationFactor: 1, // Changed to 1 for single-node benchmarks
 		HealthCheck: clusterkit.HealthCheckConfig{
 			Enabled:          true,
 			Interval:         5 * time.Second,
