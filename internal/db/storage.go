@@ -1,4 +1,4 @@
-package storage
+package db
 
 import (
 	"encoding/json"
@@ -13,7 +13,7 @@ type DocStorage struct {
 }
 
 // NewDocStorage creates a new document storage instance
-func NewDocStorage(path string) (*DocStorage, error) {
+func NewStorage(path string) (*DocStorage, error) {
 	opts := badger.DefaultOptions(path)
 	opts.Logger = nil
 

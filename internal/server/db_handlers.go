@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/skshohagmiah/flin/internal/db"
-	"github.com/skshohagmiah/flin/internal/protocol"
+	protocol "github.com/skshohagmiah/flin/internal/net"
 )
 
 // Database handler methods on Connection

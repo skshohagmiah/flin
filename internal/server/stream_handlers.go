@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"time"
 
-	"github.com/skshohagmiah/flin/internal/protocol"
+	protocol "github.com/skshohagmiah/flin/internal/net"
 )
 
 // Stream operation handlers

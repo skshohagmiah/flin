@@ -1,17 +1,13 @@
 package queue
 
-import (
-	"github.com/skshohagmiah/flin/internal/storage"
-)
-
 // Queue wraps the queue storage backend
 type Queue struct {
-	storage *storage.QueueStorage
+	storage *QueueStorage
 }
 
 // New creates a new Queue instance with BadgerDB storage
 func New(path string) (*Queue, error) {
-	store, err := storage.NewQueueStorage(path)
+	store, err := NewStorage(path)
 	if err != nil {
 		return nil, err
 	}

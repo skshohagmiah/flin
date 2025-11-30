@@ -8,12 +8,11 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/google/uuid"
-	"github.com/skshohagmiah/flin/internal/storage"
 )
 
 // DocStore provides high-level document database operations
 type DocStore struct {
-	storage *storage.DocStorage
+	storage *DocStorage
 	mu      sync.RWMutex
 	// Index tracking: collection -> field -> value -> document IDs
 	indexes map[string]map[string]map[interface{}][]string
@@ -21,7 +20,7 @@ type DocStore struct {
 
 // New creates a new document store
 func New(path string) (*DocStore, error) {
-	store, err := storage.NewDocStorage(path)
+	store, err := NewStorage(path)
 	if err != nil {
 		return nil, err
 	}

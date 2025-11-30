@@ -6,15 +6,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/skshohagmiah/flin/internal/storage"
 )
 
 // Stream manages the stream processing system
 type Stream struct {
-	storage *storage.StreamStorage
+	storage *StreamStorage
 
 	// In-memory cache of topic metadata
-	topics   map[string]*storage.TopicMetadata
+	topics   map[string]*TopicMetadata
 	topicsMu sync.RWMutex
 
 	// Consumer group state
@@ -45,14 +44,14 @@ type Consumer struct {
 // New creates a new Stream instance
 // path should be a separate directory from KV/Queue storage
 func New(path string) (*Stream, error) {
-	store, err := storage.NewStreamStorage(path)
+	store, err := NewStorage(path)
 	if err != nil {
 		return nil, err
 	}
 
 	s := &Stream{
 		storage:  store,
-		topics:   make(map[string]*storage.TopicMetadata),
+		topics:   make(map[string]*TopicMetadata),
 		groups:   make(map[string]*ConsumerGroup),
 		stopChan: make(chan struct{}),
 	}
@@ -76,7 +75,7 @@ func (s *Stream) CreateTopic(name string, partitions int, retentionMs int64) err
 		retentionMs = 7 * 24 * 60 * 60 * 1000 // 7 days default
 	}
 
-	meta := &storage.TopicMetadata{
+	meta := &TopicMetadata{
 		Name:        name,
 		Partitions:  partitions,
 		RetentionMs: retentionMs,
@@ -95,7 +94,7 @@ func (s *Stream) CreateTopic(name string, partitions int, retentionMs int64) err
 }
 
 // GetTopicMetadata returns metadata for a topic
-func (s *Stream) GetTopicMetadata(name string) (*storage.TopicMetadata, error) {
+func (s *Stream) GetTopicMetadata(name string) (*TopicMetadata, error) {
 	s.topicsMu.RLock()
 	meta, ok := s.topics[name]
 	s.topicsMu.RUnlock()
@@ -258,7 +257,7 @@ func (s *Stream) rebalanceGroup(g *ConsumerGroup) error {
 }
 
 // Consume fetches messages for a consumer in a group
-func (s *Stream) Consume(topic, group, consumerID string, count int) ([]*storage.Message, error) {
+func (s *Stream) Consume(topic, group, consumerID string, count int) ([]*Message, error) {
 	// Ensure subscription and get assigned partitions
 	s.groupsMu.RLock()
 	g, exists := s.groups[group]
@@ -283,7 +282,7 @@ func (s *Stream) Consume(topic, group, consumerID string, count int) ([]*storage
 	}
 
 	if len(partitions) == 0 {
-		return []*storage.Message{}, nil
+		return []*Message{}, nil
 	}
 
 	// Fetch messages from assigned partitions
@@ -291,7 +290,7 @@ func (s *Stream) Consume(topic, group, consumerID string, count int) ([]*storage
 	// or round-robin.
 	// Let's try to fetch a few from each.
 
-	result := make([]*storage.Message, 0, count)
+	result := make([]*Message, 0, count)
 
 	// Simple strategy: Iterate partitions and fetch
 	perPart := count / len(partitions)
@@ -354,7 +353,7 @@ func (s *Stream) retentionLoop() {
 
 func (s *Stream) enforceRetention() {
 	s.topicsMu.RLock()
-	topics := make([]*storage.TopicMetadata, 0, len(s.topics))
+	topics := make([]*TopicMetadata, 0, len(s.topics))
 	for _, t := range s.topics {
 		topics = append(topics, t)
 	}

@@ -1,4 +1,4 @@
-package storage
+package stream
 
 import (
 	"encoding/binary"
@@ -53,7 +53,7 @@ type ConsumerOffset struct {
 }
 
 // NewStreamStorage creates a new stream storage instance
-func NewStreamStorage(path string) (*StreamStorage, error) {
+func NewStorage(path string) (*StreamStorage, error) {
 	opts := badger.DefaultOptions(path)
 	opts.Logger = nil // Disable badger logging
 

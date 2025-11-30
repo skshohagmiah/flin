@@ -5,7 +5,7 @@ import (
 	"errors"
 
 	"github.com/skshohagmiah/flin/internal/net"
-	"github.com/skshohagmiah/flin/internal/protocol"
+	protocol "github.com/skshohagmiah/flin/internal/net"
 )
 
 // Helper functions for reading responses

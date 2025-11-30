@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"log"
 	"net"
@@ -13,7 +14,7 @@ import (
 	"github.com/skshohagmiah/clusterkit"
 	"github.com/skshohagmiah/flin/internal/db"
 	"github.com/skshohagmiah/flin/internal/kv"
-	"github.com/skshohagmiah/flin/internal/protocol"
+	protocol "github.com/skshohagmiah/flin/internal/net"
 	"github.com/skshohagmiah/flin/internal/queue"
 	"github.com/skshohagmiah/flin/internal/stream"
 )
@@ -226,18 +227,24 @@ func (wp *WorkerPool) processJob(job *Job) []byte {
 		return []byte(":0\r\n")
 
 	case "INCR":
-		err := wp.store.Incr(job.key)
+		val, err := wp.store.Incr(job.key)
 		if err != nil {
 			return formatError(err)
 		}
-		return []byte("+OK\r\n")
+		// Return the new value as a bulk string
+		var buf [8]byte
+		binary.BigEndian.PutUint64(buf[:], uint64(val))
+		return formatBulkString(buf[:])
 
 	case "DECR":
-		err := wp.store.Decr(job.key)
+		val, err := wp.store.Decr(job.key)
 		if err != nil {
 			return formatError(err)
 		}
-		return []byte("+OK\r\n")
+		// Return the new value as a bulk string
+		var buf [8]byte
+		binary.BigEndian.PutUint64(buf[:], uint64(val))
+		return formatBulkString(buf[:])
 
 	// Batch operations
 	case "MSET":

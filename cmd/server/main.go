@@ -70,20 +70,13 @@ func main() {
 	var store *kv.KVStore
 	var err error
 
-	if *useMemory {
-		fmt.Println("📦 Creating in-memory KV store...")
-		store, err = kv.NewMemory()
-		if err != nil {
-			log.Fatalf("Failed to create in-memory store: %v", err)
-		}
-	} else {
-		kvDataDir := *dataDir + "/kv"
-		fmt.Printf("📦 Creating disk-based KV store at %s...\n", kvDataDir)
-		store, err = kv.New(kvDataDir)
-		if err != nil {
-			log.Fatalf("Failed to create KV store: %v", err)
-		}
+	kvDataDir := *dataDir + "/kv"
+	fmt.Printf("📦 Creating disk-based KV store at %s...\n", kvDataDir)
+	store, err = kv.New(kvDataDir)
+	if err != nil {
+		log.Fatalf("Failed to create KV store: %v", err)
 	}
+
 	defer store.Close()
 
 	// Create Queue store (always disk-based)

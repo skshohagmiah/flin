@@ -1,4 +1,4 @@
-package storage
+package queue
 
 import (
 	"encoding/binary"
@@ -24,8 +24,8 @@ type QueueMetadata struct {
 	Tail uint64 // Next position to enqueue
 }
 
-// NewQueueStorage creates a new BadgerDB-backed queue storage
-func NewQueueStorage(path string) (*QueueStorage, error) {
+// NewStorage creates a new BadgerDB-backed queue storage
+func NewStorage(path string) (*QueueStorage, error) {
 	opts := badger.DefaultOptions(path)
 	opts.Logger = nil // Disable logging for cleaner output
 

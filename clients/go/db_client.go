@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/skshohagmiah/flin/internal/net"
-	"github.com/skshohagmiah/flin/internal/protocol"
+	protocol "github.com/skshohagmiah/flin/internal/net"
 )
 
 // DBClient handles Document Database operations
