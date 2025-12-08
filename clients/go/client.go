@@ -89,6 +89,44 @@ func NewClient(opts *ClientOptions) (*Client, error) {
 	return client, nil
 }
 
+// BatchMessage represents a message in a batch
+type BatchMessage struct {
+	Partition int
+	Key       string
+	Value     []byte
+}
+
+// Publish publishes a message to a topic
+func (c *Client) Publish(topic string, partition int, key string, value []byte) error {
+	return c.Stream.Publish(topic, partition, key, value)
+}
+
+// PublishBatch publishes a batch of messages to a topic
+func (c *Client) PublishBatch(topic string, messages []*BatchMessage) error {
+	conn, err := c.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer c.pool.Put(conn)
+
+	// Convert to internal net.BatchMessage
+	netMessages := make([]*net.BatchMessage, len(messages))
+	for i, msg := range messages {
+		netMessages[i] = &net.BatchMessage{
+			Partition: msg.Partition,
+			Key:       msg.Key,
+			Value:     msg.Value,
+		}
+	}
+
+	req := net.EncodeSPublishBatchRequest(topic, netMessages)
+	if err := conn.Write(req); err != nil {
+		return err
+	}
+
+	return readOKResponse(conn)
+}
+
 // Close closes all connections
 func (c *Client) Close() error {
 	if c.pool != nil {

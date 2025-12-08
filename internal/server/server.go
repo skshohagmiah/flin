@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"log"
 	"net"
@@ -13,7 +14,7 @@ import (
 	"github.com/skshohagmiah/clusterkit"
 	"github.com/skshohagmiah/flin/internal/db"
 	"github.com/skshohagmiah/flin/internal/kv"
-	"github.com/skshohagmiah/flin/internal/protocol"
+	protocol "github.com/skshohagmiah/flin/internal/net"
 	"github.com/skshohagmiah/flin/internal/queue"
 	"github.com/skshohagmiah/flin/internal/stream"
 )
@@ -25,8 +26,6 @@ var bufferPool = sync.Pool{
 	},
 }
 
-// Server implements distributed KV server with ClusterKit coordination
-// Uses hybrid architecture: fast path (inline) + worker pool for optimal performance
 type Server struct {
 	store       *kv.KVStore
 	queue       *queue.Queue
@@ -112,9 +111,6 @@ const (
 
 // NewServer creates a new distributed KV server with hybrid architecture
 func NewServer(store *kv.KVStore, q *queue.Queue, docStore *db.DocStore, ck *clusterkit.ClusterKit, addr string, nodeID string) (*Server, error) {
-	// The original NewServer function does not take a stream parameter.
-	// Assuming a nil stream for this call, or it needs to be updated to pass one.
-	// For now, passing nil for stream.
 	return NewServerWithWorkers(store, q, nil, docStore, ck, addr, nodeID, DefaultWorkerPoolSize)
 }
 
@@ -231,18 +227,24 @@ func (wp *WorkerPool) processJob(job *Job) []byte {
 		return []byte(":0\r\n")
 
 	case "INCR":
-		err := wp.store.Incr(job.key)
+		val, err := wp.store.Incr(job.key)
 		if err != nil {
 			return formatError(err)
 		}
-		return []byte("+OK\r\n")
+		// Return the new value as a bulk string
+		var buf [8]byte
+		binary.BigEndian.PutUint64(buf[:], uint64(val))
+		return formatBulkString(buf[:])
 
 	case "DECR":
-		err := wp.store.Decr(job.key)
+		val, err := wp.store.Decr(job.key)
 		if err != nil {
 			return formatError(err)
 		}
-		return []byte("+OK\r\n")
+		// Return the new value as a bulk string
+		var buf [8]byte
+		binary.BigEndian.PutUint64(buf[:], uint64(val))
+		return formatBulkString(buf[:])
 
 	// Batch operations
 	case "MSET":
@@ -538,7 +540,7 @@ func (c *Connection) processRequestBinary(data []byte, startTime time.Time) {
 		return
 	}
 
-	log.Printf("[BINARY] Opcode: 0x%02x", req.OpCode)
+	// log.Printf("[BINARY] Opcode: 0x%02x", req.OpCode)
 
 	// Process based on opcode
 	switch req.OpCode {
@@ -572,22 +574,27 @@ func (c *Connection) processRequestBinary(data []byte, startTime time.Time) {
 		c.processBinarySCommit(req, startTime)
 	case protocol.OpSCreateTopic:
 		c.processBinarySCreateTopic(req, startTime)
+	case protocol.OpSPublishBatch:
+		c.processBinarySPublishBatch(req, startTime)
 	case protocol.OpSSubscribe:
 		c.processBinarySSubscribe(req, startTime)
 	case protocol.OpSUnsubscribe:
 		c.processBinarySUnsubscribe(req, startTime)
 	case protocol.OpDocInsert:
-		log.Printf("[BINARY] Routing to DocInsert handler")
+		// log.Printf("[BINARY] Routing to DocInsert handler")
 		c.processBinaryDocInsert(req, startTime)
 	case protocol.OpDocFind:
-		log.Printf("[BINARY] Routing to DocFind handler")
+		// log.Printf("[BINARY] Routing to DocFind handler")
 		c.processBinaryDocFind(req, startTime)
 	case protocol.OpDocUpdate:
-		log.Printf("[BINARY] Routing to DocUpdate handler")
+		// log.Printf("[BINARY] Routing to DocUpdate handler")
 		c.processBinaryDocUpdate(req, startTime)
 	case protocol.OpDocDelete:
-		log.Printf("[BINARY] Routing to DocDelete handler")
+		// log.Printf("[BINARY] Routing to DocDelete handler")
 		c.processBinaryDocDelete(req, startTime)
+	case protocol.OpDocIndex:
+		// log.Printf("[BINARY] Routing to DocIndex handler")
+		c.processBinaryDocIndex(req, startTime)
 	default:
 		log.Printf("[BINARY] Unknown opcode: 0x%02x", req.OpCode)
 		c.sendBinaryError(fmt.Errorf("unknown opcode"))

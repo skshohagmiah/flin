@@ -8,12 +8,11 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/google/uuid"
-	"github.com/skshohagmiah/flin/internal/storage"
 )
 
 // DocStore provides high-level document database operations
 type DocStore struct {
-	storage *storage.DocStorage
+	storage *DocStorage
 	mu      sync.RWMutex
 	// Index tracking: collection -> field -> value -> document IDs
 	indexes map[string]map[string]map[interface{}][]string
@@ -21,7 +20,7 @@ type DocStore struct {
 
 // New creates a new document store
 func New(path string) (*DocStore, error) {
-	store, err := storage.NewDocStorage(path)
+	store, err := NewStorage(path)
 	if err != nil {
 		return nil, err
 	}
@@ -106,31 +105,112 @@ func (ds *DocStore) Get(collection, id string) (Document, error) {
 	return doc, nil
 }
 
+// tryUseIndexes attempts to use indexes to satisfy filters
+// Returns document IDs that match the filter and a bool indicating if indexes were used
+func (ds *DocStore) tryUseIndexes(collection string, filters []Query) ([]string, bool) {
+	ds.mu.RLock()
+	defer ds.mu.RUnlock()
+
+	// Check if collection has indexes
+	collIndexes, ok := ds.indexes[collection]
+	if !ok || len(collIndexes) == 0 {
+		return nil, false
+	}
+
+	// Try to find a filter that has an index and uses equality
+	for _, filter := range filters {
+		// Only use indexes for equality filters ("eq" operator)
+		if filter.Operator != "eq" {
+			continue
+		}
+
+		// Check if this field has an index
+		if fieldIndex, hasIndex := collIndexes[filter.Field]; hasIndex {
+			// Use the index for this field
+			if docIDs, found := fieldIndex[filter.Value]; found {
+				return docIDs, true
+			}
+			// Field is indexed but no documents match
+			return []string{}, true
+		}
+	}
+
+	// No suitable index found
+	return nil, false
+}
+
 // Find searches for documents matching the query criteria
 func (ds *DocStore) Find(collection string, opts FindOptions) ([]Document, error) {
 	if collection == "" {
 		return nil, ErrInvalidCollection
 	}
 
-	prefix := makeCollectionPrefix(collection)
 	var results []Document
+	var docIDs []string
 
-	err := ds.storage.Scan(prefix, func(key string, data []byte) error {
-		var doc Document
-		if err := json.Unmarshal(data, &doc); err != nil {
-			return err
+	// Check if we can use indexes for optimization
+	docIDs, canUseIndex := ds.tryUseIndexes(collection, opts.Filters)
+
+	if canUseIndex {
+		// Use index-based retrieval - much faster for filtered queries
+		// (even if empty, it means the index confirmed no matches)
+
+		// Apply pagination to index results first to avoid unnecessary deserialization
+		startIdx := opts.Skip
+		endIdx := opts.Skip + opts.Limit
+		if opts.Limit < 0 {
+			endIdx = len(docIDs)
 		}
 
-		// Apply filters
-		if matchesFilters(doc, opts.Filters) {
-			results = append(results, doc)
+		// Bounds check
+		if startIdx >= len(docIDs) {
+			// Pagination skip goes past all results
+			return results, nil
+		}
+		if endIdx > len(docIDs) {
+			endIdx = len(docIDs)
 		}
 
-		return nil
-	})
+		// Only deserialize documents we actually need
+		for i := startIdx; i < endIdx && i < len(docIDs); i++ {
+			id := docIDs[i]
+			key := makeKey(collection, id)
+			data, err := ds.storage.Get(key)
+			if err != nil {
+				// Skip if document not found
+				continue
+			}
 
-	if err != nil {
-		return nil, err
+			var doc Document
+			if err := json.Unmarshal(data, &doc); err != nil {
+				continue
+			}
+
+			// Still need to verify all filters match (in case of multiple filters)
+			if matchesFilters(doc, opts.Filters) {
+				results = append(results, doc)
+			}
+		}
+	} else {
+		// Fall back to full table scan
+		prefix := makeCollectionPrefix(collection)
+		err := ds.storage.Scan(prefix, func(key string, data []byte) error {
+			var doc Document
+			if err := json.Unmarshal(data, &doc); err != nil {
+				return err
+			}
+
+			// Apply filters
+			if matchesFilters(doc, opts.Filters) {
+				results = append(results, doc)
+			}
+
+			return nil
+		})
+
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Apply sorting

@@ -2,9 +2,11 @@ package server
 
 import (
 	"encoding/binary"
+	"fmt"
 	"time"
 
-	"github.com/skshohagmiah/flin/internal/protocol"
+	protocol "github.com/skshohagmiah/flin/internal/net"
+	"github.com/skshohagmiah/flin/internal/stream"
 )
 
 // Stream operation handlers
@@ -111,4 +113,50 @@ func (c *Connection) processBinarySUnsubscribe(req *protocol.Request, startTime 
 	c.sendBinaryResponse(protocol.EncodeOKResponse(), startTime)
 	c.server.opsProcessed.Add(1)
 	c.server.opsFastPath.Add(1)
+}
+
+func (c *Connection) processBinarySPublishBatch(req *protocol.Request, startTime time.Time) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("Recovered from panic in processBinarySPublishBatch: %v\n", r)
+			c.sendBinaryError(fmt.Errorf("internal server error"))
+			c.server.opsErrors.Add(1)
+		}
+	}()
+
+	// Convert protocol.BatchMessage to stream.PublishMessage
+	messages := make([]*stream.PublishMessage, len(req.BatchMessages))
+	for i, msg := range req.BatchMessages {
+		messages[i] = &stream.PublishMessage{
+			Partition: msg.Partition,
+			Key:       msg.Key,
+			Value:     msg.Value,
+		}
+	}
+
+	offsets, err := c.server.stream.PublishBatch(req.Topic, messages)
+	if err != nil {
+		c.sendBinaryError(err)
+		c.server.opsErrors.Add(1)
+		return
+	}
+
+	// Encode response: [4:count][8:offset1][8:offset2]...
+	// For now, just return OK to keep protocol simple as per handler_stream_batch.go
+	// But ideally we should return offsets.
+	// Let's stick to OK for now to match the client expectation if any,
+	// or better, return the offsets.
+
+	// Since we haven't defined a specific response format for batch publish in protocol yet,
+	// and the user request didn't specify it, let's return OK for simplicity
+	// and to avoid breaking changes if client expects standard response.
+	// If we want to return offsets, we'd need a new response type or reuse MultiValue.
+
+	// Let's return OK for now.
+	c.sendBinaryResponse(protocol.EncodeOKResponse(), startTime)
+	c.server.opsProcessed.Add(1)
+	c.server.opsFastPath.Add(1)
+
+	// Prevent unused variable error
+	_ = offsets
 }

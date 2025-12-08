@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/skshohagmiah/flin/internal/net"
-	"github.com/skshohagmiah/flin/internal/protocol"
+	protocol "github.com/skshohagmiah/flin/internal/net"
 )
 
 // DBClient handles Document Database operations
@@ -67,6 +67,32 @@ func (c *DBClient) Delete(collection string) *DeleteBuilder {
 		collection: collection,
 		filters:    make([]QueryFilter, 0),
 	}
+}
+
+// CreateIndex creates an index on a field in a collection
+func (c *DBClient) CreateIndex(collection string, field string) error {
+	conn, err := c.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer c.pool.Put(conn)
+
+	request := protocol.EncodeDocIndexRequest(collection, field)
+	if err := conn.Write(request); err != nil {
+		return err
+	}
+
+	resp, err := readValueResponse(conn)
+	if err != nil {
+		return err
+	}
+
+	// Check if response is "OK"
+	if string(resp) != "OK" {
+		return fmt.Errorf("index creation returned unexpected response: %s", string(resp))
+	}
+
+	return nil
 }
 
 // Internal execution methods used by builders

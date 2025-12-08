@@ -5,21 +5,23 @@ import (
 	"hash/fnv"
 	"sync"
 	"time"
-
-	"github.com/skshohagmiah/flin/internal/storage"
 )
 
 // Stream manages the stream processing system
 type Stream struct {
-	storage *storage.StreamStorage
+	storage *StreamStorage
 
 	// In-memory cache of topic metadata
-	topics   map[string]*storage.TopicMetadata
+	topics   map[string]*TopicMetadata
 	topicsMu sync.RWMutex
 
 	// Consumer group state
 	groups   map[string]*ConsumerGroup
 	groupsMu sync.RWMutex
+
+	// Offset cache for faster reads (key: "group:topic:partition")
+	offsetCache   map[string]int64
+	offsetCacheMu sync.RWMutex
 
 	// Background tasks
 	stopChan  chan struct{}
@@ -45,24 +47,26 @@ type Consumer struct {
 // New creates a new Stream instance
 // path should be a separate directory from KV/Queue storage
 func New(path string) (*Stream, error) {
-	store, err := storage.NewStreamStorage(path)
+	store, err := NewStorage(path)
 	if err != nil {
 		return nil, err
 	}
 
 	s := &Stream{
-		storage:  store,
-		topics:   make(map[string]*storage.TopicMetadata),
-		groups:   make(map[string]*ConsumerGroup),
-		stopChan: make(chan struct{}),
+		storage:     store,
+		topics:      make(map[string]*TopicMetadata),
+		groups:      make(map[string]*ConsumerGroup),
+		offsetCache: make(map[string]int64),
+		stopChan:    make(chan struct{}),
 	}
 
 	// Load existing topics (TODO: Implement listing/loading from storage if needed)
 	// For now, we rely on lazy loading or explicit creation
 
 	// Start background tasks
-	s.wg.Add(1)
+	s.wg.Add(2)
 	go s.retentionLoop()
+	go s.offsetFlushLoop()
 
 	return s, nil
 }
@@ -76,7 +80,7 @@ func (s *Stream) CreateTopic(name string, partitions int, retentionMs int64) err
 		retentionMs = 7 * 24 * 60 * 60 * 1000 // 7 days default
 	}
 
-	meta := &storage.TopicMetadata{
+	meta := &TopicMetadata{
 		Name:        name,
 		Partitions:  partitions,
 		RetentionMs: retentionMs,
@@ -95,7 +99,7 @@ func (s *Stream) CreateTopic(name string, partitions int, retentionMs int64) err
 }
 
 // GetTopicMetadata returns metadata for a topic
-func (s *Stream) GetTopicMetadata(name string) (*storage.TopicMetadata, error) {
+func (s *Stream) GetTopicMetadata(name string) (*TopicMetadata, error) {
 	s.topicsMu.RLock()
 	meta, ok := s.topics[name]
 	s.topicsMu.RUnlock()
@@ -151,6 +155,46 @@ func (s *Stream) Publish(topic string, partition int, key string, value []byte) 
 	}
 
 	return s.storage.AppendMessage(topic, partition, key, value)
+}
+
+// PublishMessage represents a message to be published
+type PublishMessage struct {
+	Partition int // -1 for auto-select
+	Key       string
+	Value     []byte
+}
+
+// PublishBatch publishes multiple messages atomically to a topic
+// This is significantly faster than calling Publish multiple times
+func (s *Stream) PublishBatch(topic string, messages []*PublishMessage) ([]int64, error) {
+	// Ensure topic exists or get metadata
+	meta, err := s.GetTopicMetadata(topic)
+	if err != nil {
+		// Auto-create topic on publish
+		err = s.CreateTopic(topic, 4, 0)
+		if err != nil {
+			return nil, err
+		}
+		meta, _ = s.GetTopicMetadata(topic)
+	}
+
+	// Assign partitions for messages that need auto-selection
+	for _, msg := range messages {
+		if msg.Partition < 0 || msg.Partition >= meta.Partitions {
+			if msg.Key != "" {
+				// Hash partition
+				h := fnv.New32a()
+				h.Write([]byte(msg.Key))
+				msg.Partition = int(h.Sum32()) % meta.Partitions
+			} else {
+				// Round-robin (simplified: time-based)
+				msg.Partition = int(time.Now().UnixNano()) % meta.Partitions
+			}
+		}
+	}
+
+	// Batch append to storage
+	return s.storage.AppendMessageBatch(topic, messages)
 }
 
 // Subscribe registers a consumer in a group
@@ -257,8 +301,8 @@ func (s *Stream) rebalanceGroup(g *ConsumerGroup) error {
 	return nil
 }
 
-// Consume fetches messages for a consumer in a group
-func (s *Stream) Consume(topic, group, consumerID string, count int) ([]*storage.Message, error) {
+// Consume fetches messages for a consumer in a group using parallel partition fetching
+func (s *Stream) Consume(topic, group, consumerID string, count int) ([]*Message, error) {
 	// Ensure subscription and get assigned partitions
 	s.groupsMu.RLock()
 	g, exists := s.groups[group]
@@ -283,47 +327,62 @@ func (s *Stream) Consume(topic, group, consumerID string, count int) ([]*storage
 	}
 
 	if len(partitions) == 0 {
-		return []*storage.Message{}, nil
+		return []*Message{}, nil
 	}
 
-	// Fetch messages from assigned partitions
-	// For simplicity, we'll fetch from the first partition that has messages,
-	// or round-robin.
-	// Let's try to fetch a few from each.
+	// Parallel fetch from all partitions
+	type partitionResult struct {
+		messages []*Message
+		err      error
+	}
 
-	result := make([]*storage.Message, 0, count)
-
-	// Simple strategy: Iterate partitions and fetch
+	resultChan := make(chan partitionResult, len(partitions))
 	perPart := count / len(partitions)
 	if perPart == 0 {
 		perPart = 1
 	}
 
+	// Launch goroutine for each partition
 	for _, p := range partitions {
+		go func(partition int) {
+			// Get current offset from cache or storage
+			offset, err := s.getCachedOffset(group, topic, partition)
+			if err != nil {
+				resultChan <- partitionResult{err: err}
+				return
+			}
+
+			// Fetch messages
+			msgs, err := s.storage.FetchMessages(topic, partition, offset, perPart)
+			resultChan <- partitionResult{messages: msgs, err: err}
+		}(p)
+	}
+
+	// Collect results
+	result := make([]*Message, 0, count)
+	for i := 0; i < len(partitions); i++ {
+		res := <-resultChan
+		if res.err != nil {
+			return nil, res.err
+		}
+		result = append(result, res.messages...)
 		if len(result) >= count {
 			break
 		}
-
-		// Get current offset
-		offset, err := s.storage.GetConsumerOffset(group, topic, p)
-		if err != nil {
-			return nil, err
-		}
-
-		// Fetch
-		msgs, err := s.storage.FetchMessages(topic, p, offset, perPart)
-		if err != nil {
-			return nil, err
-		}
-
-		result = append(result, msgs...)
 	}
 
 	return result, nil
 }
 
-// Commit commits an offset for a consumer group
+// Commit commits an offset for a consumer group and updates cache
 func (s *Stream) Commit(topic, group string, partition int, offset int64) error {
+	// Update cache
+	cacheKey := fmt.Sprintf("%s:%s:%d", group, topic, partition)
+	s.offsetCacheMu.Lock()
+	s.offsetCache[cacheKey] = offset
+	s.offsetCacheMu.Unlock()
+
+	// Persist to storage
 	return s.storage.CommitOffset(group, topic, partition, offset)
 }
 
@@ -354,7 +413,7 @@ func (s *Stream) retentionLoop() {
 
 func (s *Stream) enforceRetention() {
 	s.topicsMu.RLock()
-	topics := make([]*storage.TopicMetadata, 0, len(s.topics))
+	topics := make([]*TopicMetadata, 0, len(s.topics))
 	for _, t := range s.topics {
 		topics = append(topics, t)
 	}
