@@ -6,7 +6,11 @@ import { DOC_SECTIONS } from '@/lib/constants';
 import { ChevronDown } from 'lucide-react';
 import { useState } from 'react';
 
-export default function Sidebar() {
+interface SidebarProps {
+    onLinkClick?: () => void;
+}
+
+export default function Sidebar({ onLinkClick }: SidebarProps = {}) {
     const pathname = usePathname();
     const [openSections, setOpenSections] = useState<string[]>(
         DOC_SECTIONS.map(s => s.title)
@@ -43,6 +47,7 @@ export default function Sidebar() {
                                     <li key={item.href}>
                                         <Link
                                             href={item.href}
+                                            onClick={onLinkClick}
                                             className={`block text-sm py-1.5 px-3 rounded transition-colors ${isActive
                                                 ? 'bg-purple-500/10 text-purple-400 font-medium'
                                                 : 'text-gray-400 hover:text-white hover:bg-white/5'

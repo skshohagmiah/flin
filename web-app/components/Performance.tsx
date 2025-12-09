@@ -66,27 +66,27 @@ export default function Performance() {
                         whileInView={{ opacity: 1, y: 0 }}
                         viewport={{ once: true }}
                         transition={{ delay: 0.1 }}
-                        className="glass glass-hover p-8 rounded-2xl"
+                        className="glass glass-hover p-6 md:p-8 rounded-2xl"
                     >
-                        <div className="flex items-center gap-4 mb-6">
-                            <div className="w-12 h-12 rounded-xl bg-purple-500/20 flex items-center justify-center border border-purple-500/30">
-                                <Zap className="w-6 h-6 text-purple-400" />
+                        <div className="flex items-center gap-3 md:gap-4 mb-4 md:mb-6">
+                            <div className="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-purple-500/20 flex items-center justify-center border border-purple-500/30">
+                                <Zap className="w-5 h-5 md:w-6 md:h-6 text-purple-400" />
                             </div>
                             <div>
-                                <h3 className="text-lg font-semibold">KV Write</h3>
-                                <p className="text-sm text-gray-400">Key-Value Store</p>
+                                <h3 className="text-base md:text-lg font-semibold">KV Write</h3>
+                                <p className="text-xs md:text-sm text-gray-400">Key-Value Store</p>
                             </div>
                         </div>
                         <div className="space-y-3">
                             <div>
-                                <div className="text-4xl font-bold text-purple-400 mb-1">
+                                <div className="text-3xl md:text-4xl font-bold text-purple-400 mb-1">
                                     {PERFORMANCE_METRICS.kv.write.throughput}
                                 </div>
-                                <div className="text-sm text-gray-400">ops/sec</div>
+                                <div className="text-xs md:text-sm text-gray-400">ops/sec</div>
                             </div>
                             <div className="flex items-center justify-between pt-3 border-t border-white/10">
-                                <span className="text-sm text-gray-400">Latency: {PERFORMANCE_METRICS.kv.write.latency}</span>
-                                <span className="text-sm font-semibold text-green-400">{PERFORMANCE_METRICS.kv.write.speedup} faster</span>
+                                <span className="text-xs md:text-sm text-gray-400">Latency: {PERFORMANCE_METRICS.kv.write.latency}</span>
+                                <span className="text-xs md:text-sm font-semibold text-green-400">{PERFORMANCE_METRICS.kv.write.speedup} faster</span>
                             </div>
                         </div>
                     </motion.div>
@@ -97,27 +97,27 @@ export default function Performance() {
                         whileInView={{ opacity: 1, y: 0 }}
                         viewport={{ once: true }}
                         transition={{ delay: 0.2 }}
-                        className="glass glass-hover p-8 rounded-2xl"
+                        className="glass glass-hover p-6 md:p-8 rounded-2xl"
                     >
-                        <div className="flex items-center gap-4 mb-6">
-                            <div className="w-12 h-12 rounded-xl bg-cyan-500/20 flex items-center justify-center border border-cyan-500/30">
-                                <TrendingUp className="w-6 h-6 text-cyan-400" />
+                        <div className="flex items-center gap-3 md:gap-4 mb-4 md:mb-6">
+                            <div className="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-cyan-500/20 flex items-center justify-center border border-cyan-500/30">
+                                <TrendingUp className="w-5 h-5 md:w-6 md:h-6 text-cyan-400" />
                             </div>
                             <div>
-                                <h3 className="text-lg font-semibold">KV Batch</h3>
-                                <p className="text-sm text-gray-400">Batch Operations</p>
+                                <h3 className="text-base md:text-lg font-semibold">KV Batch</h3>
+                                <p className="text-xs md:text-sm text-gray-400">Batch Operations</p>
                             </div>
                         </div>
                         <div className="space-y-3">
                             <div>
-                                <div className="text-4xl font-bold text-cyan-400 mb-1">
+                                <div className="text-3xl md:text-4xl font-bold text-cyan-400 mb-1">
                                     {PERFORMANCE_METRICS.kv.batch.throughput}
                                 </div>
-                                <div className="text-sm text-gray-400">ops/sec</div>
+                                <div className="text-xs md:text-sm text-gray-400">ops/sec</div>
                             </div>
                             <div className="flex items-center justify-between pt-3 border-t border-white/10">
-                                <span className="text-sm text-gray-400">Latency: {PERFORMANCE_METRICS.kv.batch.latency}</span>
-                                <span className="text-sm font-semibold text-green-400">{PERFORMANCE_METRICS.kv.batch.speedup} faster</span>
+                                <span className="text-xs md:text-sm text-gray-400">Latency: {PERFORMANCE_METRICS.kv.batch.latency}</span>
+                                <span className="text-xs md:text-sm font-semibold text-green-400">{PERFORMANCE_METRICS.kv.batch.speedup} faster</span>
                             </div>
                         </div>
                     </motion.div>
@@ -128,27 +128,27 @@ export default function Performance() {
                         whileInView={{ opacity: 1, y: 0 }}
                         viewport={{ once: true }}
                         transition={{ delay: 0.3 }}
-                        className="glass glass-hover p-8 rounded-2xl"
+                        className="glass glass-hover p-6 md:p-8 rounded-2xl"
                     >
-                        <div className="flex items-center gap-4 mb-6">
-                            <div className="w-12 h-12 rounded-xl bg-purple-500/20 flex items-center justify-center border border-purple-500/30">
-                                <MessageSquare className="w-6 h-6 text-purple-400" />
+                        <div className="flex items-center gap-3 md:gap-4 mb-4 md:mb-6">
+                            <div className="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-purple-500/20 flex items-center justify-center border border-purple-500/30">
+                                <MessageSquare className="w-5 h-5 md:w-6 md:h-6 text-purple-400" />
                             </div>
                             <div>
-                                <h3 className="text-lg font-semibold">Queue Push</h3>
-                                <p className="text-sm text-gray-400">Message Queue</p>
+                                <h3 className="text-base md:text-lg font-semibold">Queue Push</h3>
+                                <p className="text-xs md:text-sm text-gray-400">Message Queue</p>
                             </div>
                         </div>
                         <div className="space-y-3">
                             <div>
-                                <div className="text-4xl font-bold text-purple-400 mb-1">
+                                <div className="text-3xl md:text-4xl font-bold text-purple-400 mb-1">
                                     {PERFORMANCE_METRICS.queue.push.throughput}
                                 </div>
-                                <div className="text-sm text-gray-400">ops/sec</div>
+                                <div className="text-xs md:text-sm text-gray-400">ops/sec</div>
                             </div>
                             <div className="flex items-center justify-between pt-3 border-t border-white/10">
-                                <span className="text-sm text-gray-400">Latency: {PERFORMANCE_METRICS.queue.push.latency}</span>
-                                <span className="text-sm font-semibold text-green-400">{PERFORMANCE_METRICS.queue.push.speedup} faster</span>
+                                <span className="text-xs md:text-sm text-gray-400">Latency: {PERFORMANCE_METRICS.queue.push.latency}</span>
+                                <span className="text-xs md:text-sm font-semibold text-green-400">{PERFORMANCE_METRICS.queue.push.speedup} faster</span>
                             </div>
                         </div>
                     </motion.div>
@@ -159,27 +159,27 @@ export default function Performance() {
                         whileInView={{ opacity: 1, y: 0 }}
                         viewport={{ once: true }}
                         transition={{ delay: 0.4 }}
-                        className="glass glass-hover p-8 rounded-2xl"
+                        className="glass glass-hover p-6 md:p-8 rounded-2xl"
                     >
-                        <div className="flex items-center gap-4 mb-6">
-                            <div className="w-12 h-12 rounded-xl bg-cyan-500/20 flex items-center justify-center border border-cyan-500/30">
-                                <Clock className="w-6 h-6 text-cyan-400" />
+                        <div className="flex items-center gap-3 md:gap-4 mb-4 md:mb-6">
+                            <div className="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-cyan-500/20 flex items-center justify-center border border-cyan-500/30">
+                                <Clock className="w-5 h-5 md:w-6 md:h-6 text-cyan-400" />
                             </div>
                             <div>
-                                <h3 className="text-lg font-semibold">Queue Pop</h3>
-                                <p className="text-sm text-gray-400">Message Queue</p>
+                                <h3 className="text-base md:text-lg font-semibold">Queue Pop</h3>
+                                <p className="text-xs md:text-sm text-gray-400">Message Queue</p>
                             </div>
                         </div>
                         <div className="space-y-3">
                             <div>
-                                <div className="text-4xl font-bold text-cyan-400 mb-1">
+                                <div className="text-3xl md:text-4xl font-bold text-cyan-400 mb-1">
                                     {PERFORMANCE_METRICS.queue.pop.throughput}
                                 </div>
-                                <div className="text-sm text-gray-400">ops/sec</div>
+                                <div className="text-xs md:text-sm text-gray-400">ops/sec</div>
                             </div>
                             <div className="flex items-center justify-between pt-3 border-t border-white/10">
-                                <span className="text-sm text-gray-400">Latency: {PERFORMANCE_METRICS.queue.pop.latency}</span>
-                                <span className="text-sm font-semibold text-green-400">{PERFORMANCE_METRICS.queue.pop.speedup} faster</span>
+                                <span className="text-xs md:text-sm text-gray-400">Latency: {PERFORMANCE_METRICS.queue.pop.latency}</span>
+                                <span className="text-xs md:text-sm font-semibold text-green-400">{PERFORMANCE_METRICS.queue.pop.speedup} faster</span>
                             </div>
                         </div>
                     </motion.div>
@@ -190,27 +190,27 @@ export default function Performance() {
                         whileInView={{ opacity: 1, y: 0 }}
                         viewport={{ once: true }}
                         transition={{ delay: 0.5 }}
-                        className="glass glass-hover p-8 rounded-2xl"
+                        className="glass glass-hover p-6 md:p-8 rounded-2xl"
                     >
-                        <div className="flex items-center gap-4 mb-6">
-                            <div className="w-12 h-12 rounded-xl bg-purple-500/20 flex items-center justify-center border border-purple-500/30">
-                                <Workflow className="w-6 h-6 text-purple-400" />
+                        <div className="flex items-center gap-3 md:gap-4 mb-4 md:mb-6">
+                            <div className="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-purple-500/20 flex items-center justify-center border border-purple-500/30">
+                                <Workflow className="w-5 h-5 md:w-6 md:h-6 text-purple-400" />
                             </div>
                             <div>
-                                <h3 className="text-lg font-semibold">DB Insert</h3>
-                                <p className="text-sm text-gray-400">Document Database</p>
+                                <h3 className="text-base md:text-lg font-semibold">DB Insert</h3>
+                                <p className="text-xs md:text-sm text-gray-400">Document Database</p>
                             </div>
                         </div>
                         <div className="space-y-3">
                             <div>
-                                <div className="text-4xl font-bold text-purple-400 mb-1">
+                                <div className="text-3xl md:text-4xl font-bold text-purple-400 mb-1">
                                     {PERFORMANCE_METRICS.db.insert.throughput}
                                 </div>
-                                <div className="text-sm text-gray-400">ops/sec</div>
+                                <div className="text-xs md:text-sm text-gray-400">ops/sec</div>
                             </div>
                             <div className="flex items-center justify-between pt-3 border-t border-white/10">
-                                <span className="text-sm text-gray-400">Latency: {PERFORMANCE_METRICS.db.insert.latency}</span>
-                                <span className="text-sm font-semibold text-gray-500">Baseline</span>
+                                <span className="text-xs md:text-sm text-gray-400">Latency: {PERFORMANCE_METRICS.db.insert.latency}</span>
+                                <span className="text-xs md:text-sm font-semibold text-gray-500">Baseline</span>
                             </div>
                         </div>
                     </motion.div>
@@ -221,12 +221,12 @@ export default function Performance() {
                     initial={{ opacity: 0, y: 20 }}
                     whileInView={{ opacity: 1, y: 0 }}
                     viewport={{ once: true }}
-                    className="glass p-8 rounded-2xl text-center"
+                    className="glass p-6 md:p-8 rounded-2xl text-center"
                 >
-                    <p className="text-lg text-gray-300 mb-4">
+                    <p className="text-sm md:text-base lg:text-lg text-gray-300 mb-3 md:mb-4">
                         Benchmarked on <span className="text-purple-400 font-semibold">AWS EC2 c5.2xlarge</span> instances with <span className="text-purple-400 font-semibold">8 vCPUs</span> and <span className="text-purple-400 font-semibold">16GB RAM</span>
                     </p>
-                    <p className="text-sm text-gray-400">
+                    <p className="text-xs md:text-sm text-gray-400">
                         All tests performed with 256 concurrent workers. Results represent average throughput over 60-second runs.
                     </p>
                 </motion.div>
