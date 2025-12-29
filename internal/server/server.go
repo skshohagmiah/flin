@@ -16,7 +16,6 @@ import (
 	"github.com/skshohagmiah/flin/internal/kv"
 	protocol "github.com/skshohagmiah/flin/internal/net"
 	"github.com/skshohagmiah/flin/internal/queue"
-	"github.com/skshohagmiah/flin/internal/stream"
 )
 
 // Buffer pool for connection buffers (32KB each)
@@ -29,7 +28,6 @@ var bufferPool = sync.Pool{
 type Server struct {
 	store       *kv.KVStore
 	queue       *queue.Queue
-	stream      *stream.Stream
 	db          *db.DocStore
 	ck          *clusterkit.ClusterKit
 	listener    net.Listener
@@ -111,11 +109,11 @@ const (
 
 // NewServer creates a new distributed KV server with hybrid architecture
 func NewServer(store *kv.KVStore, q *queue.Queue, docStore *db.DocStore, ck *clusterkit.ClusterKit, addr string, nodeID string) (*Server, error) {
-	return NewServerWithWorkers(store, q, nil, docStore, ck, addr, nodeID, DefaultWorkerPoolSize)
+	return NewServerWithWorkers(store, q, docStore, ck, addr, nodeID, DefaultWorkerPoolSize)
 }
 
 // NewServerWithWorkers creates a server with custom worker count
-func NewServerWithWorkers(store *kv.KVStore, q *queue.Queue, stream *stream.Stream, docStore *db.DocStore, ck *clusterkit.ClusterKit, addr string, nodeID string, workerCount int) (*Server, error) {
+func NewServerWithWorkers(store *kv.KVStore, q *queue.Queue, docStore *db.DocStore, ck *clusterkit.ClusterKit, addr string, nodeID string, workerCount int) (*Server, error) {
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen: %w", err)
@@ -128,7 +126,6 @@ func NewServerWithWorkers(store *kv.KVStore, q *queue.Queue, stream *stream.Stre
 	srv := &Server{
 		store:    store,
 		queue:    q,
-		stream:   stream,   // Initialize the new stream field
 		db:       docStore, // Initialize the document store field
 		ck:       ck,
 		listener: listener,
@@ -566,20 +563,6 @@ func (c *Connection) processRequestBinary(data []byte, startTime time.Time) {
 		c.processBinaryQLen(req, startTime)
 	case protocol.OpQClear:
 		c.processBinaryQClear(req, startTime)
-	case protocol.OpSPublish:
-		c.processBinarySPublish(req, startTime)
-	case protocol.OpSConsume:
-		c.processBinarySConsume(req, startTime)
-	case protocol.OpSCommit:
-		c.processBinarySCommit(req, startTime)
-	case protocol.OpSCreateTopic:
-		c.processBinarySCreateTopic(req, startTime)
-	case protocol.OpSPublishBatch:
-		c.processBinarySPublishBatch(req, startTime)
-	case protocol.OpSSubscribe:
-		c.processBinarySSubscribe(req, startTime)
-	case protocol.OpSUnsubscribe:
-		c.processBinarySUnsubscribe(req, startTime)
 	case protocol.OpDocInsert:
 		// log.Printf("[BINARY] Routing to DocInsert handler")
 		c.processBinaryDocInsert(req, startTime)

@@ -14,7 +14,6 @@ import (
 	"github.com/skshohagmiah/flin/internal/kv"
 	"github.com/skshohagmiah/flin/internal/queue"
 	"github.com/skshohagmiah/flin/internal/server"
-	"github.com/skshohagmiah/flin/internal/stream"
 )
 
 var (
@@ -91,11 +90,9 @@ func main() {
 	// Create Stream store (always disk-based)
 	streamDataDir := *dataDir + "/stream"
 	fmt.Printf("📦 Creating disk-based Stream store at %s...\n", streamDataDir)
-	streamStore, err := stream.New(streamDataDir)
 	if err != nil {
 		log.Fatalf("Failed to create stream store: %v", err)
 	}
-	defer streamStore.Close()
 
 	// Create Document store (always disk-based)
 	docDataDir := *dataDir + "/db"
@@ -140,7 +137,6 @@ func main() {
 	srv, err := server.NewServerWithWorkers(
 		store,
 		queueStore,
-		streamStore,
 		docStore,
 		ck,
 		*kvPort,
