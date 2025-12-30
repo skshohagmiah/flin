@@ -28,7 +28,7 @@ var bufferPool = sync.Pool{
 type Server struct {
 	store       *kv.KVStore
 	queue       *queue.Queue
-	db          *db.DocStore
+	db          *db.Store
 	ck          *clusterkit.ClusterKit
 	listener    net.Listener
 	connections sync.Map
@@ -108,12 +108,12 @@ const (
 )
 
 // NewServer creates a new distributed KV server with hybrid architecture
-func NewServer(store *kv.KVStore, q *queue.Queue, docStore *db.DocStore, ck *clusterkit.ClusterKit, addr string, nodeID string) (*Server, error) {
+func NewServer(store *kv.KVStore, q *queue.Queue, docStore *db.Store, ck *clusterkit.ClusterKit, addr string, nodeID string) (*Server, error) {
 	return NewServerWithWorkers(store, q, docStore, ck, addr, nodeID, DefaultWorkerPoolSize)
 }
 
 // NewServerWithWorkers creates a server with custom worker count
-func NewServerWithWorkers(store *kv.KVStore, q *queue.Queue, docStore *db.DocStore, ck *clusterkit.ClusterKit, addr string, nodeID string, workerCount int) (*Server, error) {
+func NewServerWithWorkers(store *kv.KVStore, q *queue.Queue, docStore *db.Store, ck *clusterkit.ClusterKit, addr string, nodeID string, workerCount int) (*Server, error) {
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen: %w", err)
@@ -484,8 +484,8 @@ func (c *Connection) writeLoop() {
 func (c *Connection) processRequestHybrid(data []byte) {
 	startTime := time.Now()
 
-	// Detect protocol: binary starts with opcode 0x01-0x12 (KV) or 0x20-0x24 (Queue) or 0x30-0x36 (Stream) or 0x40-0x44 (Document), text starts with ASCII letters
-	isBinary := len(data) > 0 && ((data[0] >= 0x01 && data[0] <= 0x12) || (data[0] >= 0x20 && data[0] <= 0x24) || (data[0] >= 0x30 && data[0] <= 0x36) || (data[0] >= 0x40 && data[0] <= 0x44))
+	// Detect protocol: binary starts with opcode 0x01-0x12 (KV) or 0x20-0x24 (Queue) or 0x30-0x36 (Stream) or 0x40-0x45 (Document), text starts with ASCII letters
+	isBinary := len(data) > 0 && ((data[0] >= 0x01 && data[0] <= 0x12) || (data[0] >= 0x20 && data[0] <= 0x24) || (data[0] >= 0x30 && data[0] <= 0x36) || (data[0] >= 0x40 && data[0] <= 0x45))
 
 	if len(data) > 0 && (data[0] == 0x40 || data[0] == 0x41 || data[0] == 0x42 || data[0] == 0x43) {
 		log.Printf("[DEBUG] Got document opcode: 0x%02x, isBinary=%v", data[0], isBinary)
@@ -578,6 +578,10 @@ func (c *Connection) processRequestBinary(data []byte, startTime time.Time) {
 	case protocol.OpDocIndex:
 		// log.Printf("[BINARY] Routing to DocIndex handler")
 		c.processBinaryDocIndex(req, startTime)
+	case protocol.OpSchemaRegister:
+		c.processBinarySchemaRegister(req, startTime)
+	case protocol.OpSchemaRegisterFQL:
+		c.processBinarySchemaRegisterFQL(req, startTime)
 	default:
 		log.Printf("[BINARY] Unknown opcode: 0x%02x", req.OpCode)
 		c.sendBinaryError(fmt.Errorf("unknown opcode"))

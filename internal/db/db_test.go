@@ -6,7 +6,7 @@ import (
 )
 
 // Helper function to create a test DB
-func createTestDB(t *testing.T) *DocStore {
+func createTestDB(t *testing.T) *Store {
 	tmpDir := t.TempDir()
 	db, err := New(tmpDir)
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/skshohagmiah/flin/internal/net"
 	protocol "github.com/skshohagmiah/flin/internal/net"
 )
@@ -93,6 +94,65 @@ func (c *DBClient) CreateIndex(collection string, field string) error {
 	}
 
 	return nil
+}
+
+// RegisterFQL sends a raw FQL schema definition string to the server
+func (c *DBClient) RegisterFQL(fql string) error {
+	conn, err := c.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer c.pool.Put(conn)
+
+	reqID := uuid.New().String()
+	payload := protocol.EncodeSchemaRegisterFQLRequest(reqID, fql)
+
+	// Send request
+	if err := conn.Write(payload); err != nil {
+		return err
+	}
+
+	// Wait for generic response (OK/Error)
+	resp, err := readValueResponse(conn)
+	if err != nil {
+		// readValueResponse might return error encoded in response
+		return err
+	}
+
+	if string(resp) != "OK" {
+		return fmt.Errorf("server error: %s", string(resp))
+	}
+
+	return nil
+}
+
+// Schema represents a Cassandra-like table schema
+type Schema struct {
+	TableName      string            `json:"table_name"`
+	PartitionKeys  []string          `json:"partition_keys"`
+	ClusteringKeys []string          `json:"clustering_keys"`
+	Columns        map[string]string `json:"columns"` // field name -> type
+}
+
+// RegisterSchema registers a schema for a collection
+func (c *DBClient) RegisterSchema(schema Schema) error {
+	conn, err := c.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer c.pool.Put(conn)
+
+	schemaBytes, err := json.Marshal(schema)
+	if err != nil {
+		return fmt.Errorf("failed to marshal schema: %w", err)
+	}
+
+	request := protocol.EncodeSchemaRegisterRequest(schema.TableName, schemaBytes)
+	if err := conn.Write(request); err != nil {
+		return err
+	}
+
+	return readOKResponse(conn)
 }
 
 // Internal execution methods used by builders

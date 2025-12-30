@@ -1,0 +1,32 @@
+-- KeySpace: taskflow
+
+CREATE TABLE users (
+    user_id     TEXT,
+    email       TEXT,
+    name        TEXT,
+    role        TEXT,
+    created_at  DOUBLE,
+    PRIMARY KEY (user_id)
+);
+
+CREATE TABLE projects (
+    project_id  TEXT,
+    name        TEXT,
+    description TEXT,
+    owner_id    TEXT,
+    created_at  DOUBLE,
+    PRIMARY KEY (project_id)
+);
+
+CREATE TABLE tasks (
+    project_id  TEXT,
+    task_id     TEXT,
+    title       TEXT,
+    description TEXT,
+    assignee_id TEXT,
+    status      TEXT,
+    priority    TEXT,
+    created_at  DOUBLE,
+    updated_at  DOUBLE,
+    PRIMARY KEY ((project_id), task_id)
+);

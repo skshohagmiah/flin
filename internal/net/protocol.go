@@ -75,11 +75,13 @@ const (
 	OpSPublishBatch byte = 0x37 // Stream Publish Batch
 
 	// Document operation codes
-	OpDocInsert byte = 0x40
-	OpDocFind   byte = 0x41
-	OpDocUpdate byte = 0x42
-	OpDocDelete byte = 0x43
-	OpDocIndex  byte = 0x44
+	OpDocInsert         byte = 0x40
+	OpDocFind           byte = 0x41
+	OpDocUpdate         byte = 0x42
+	OpDocDelete         byte = 0x43
+	OpDocIndex          byte = 0x44
+	OpSchemaRegister    byte = 0x45
+	OpSchemaRegisterFQL byte = 0x46 // Register Schema (FQL)
 
 	// Status codes
 	StatusOK         byte = 0x00
@@ -97,6 +99,7 @@ const (
 // Request represents a parsed binary request
 type Request struct {
 	OpCode byte
+	ID     string
 	Key    string
 	Value  []byte
 	Keys   []string
@@ -442,6 +445,10 @@ func DecodeRequest(data []byte) (*Request, error) {
 		return decodeDocDeleteRequest(payload)
 	case OpDocIndex:
 		return decodeDocIndexRequest(payload)
+	case OpSchemaRegister:
+		return decodeSchemaRegisterRequest(payload)
+	case OpSchemaRegisterFQL:
+		return decodeSchemaRegisterFQLRequest(payload)
 	default:
 		return nil, fmt.Errorf("unknown opcode: %d", req.OpCode)
 	}
@@ -664,7 +671,64 @@ func EncodeErrorResponse(err error) []byte {
 	return buf
 }
 
-// DecodeResponse parses a binary response
+// EncodeSchemaRegisterRequest encodes a SCHEMA_REGISTER request
+func EncodeSchemaRegisterRequest(collection string, schemaJSON []byte) []byte {
+	// Format: [1:opcode][4:payloadLen][2:collLen][collection][4:schemaLen][schemaJSON]
+	collLen := len(collection)
+	schemaLen := len(schemaJSON)
+
+	totalSize := 1 + 4 + 2 + collLen + 4 + schemaLen
+	buf := make([]byte, totalSize)
+
+	pos := 0
+	buf[pos] = OpSchemaRegister
+	pos++
+
+	payloadLen := totalSize - 5
+	binary.BigEndian.PutUint32(buf[pos:], uint32(payloadLen))
+	pos += 4
+
+	binary.BigEndian.PutUint16(buf[pos:], uint16(collLen))
+	pos += 2
+	copy(buf[pos:], collection)
+	pos += collLen
+
+	binary.BigEndian.PutUint32(buf[pos:], uint32(schemaLen))
+	pos += 4
+	copy(buf[pos:], schemaJSON)
+
+	return buf
+}
+
+func decodeSchemaRegisterRequest(payload []byte) (*Request, error) {
+	if len(payload) < 6 {
+		return nil, fmt.Errorf("invalid SCHEMA_REGISTER payload")
+	}
+
+	req := &Request{OpCode: OpSchemaRegister}
+	pos := 0
+
+	collLen := binary.BigEndian.Uint16(payload[pos:])
+	pos += 2
+
+	if len(payload) < pos+int(collLen)+4 {
+		return nil, fmt.Errorf("invalid SCHEMA_REGISTER payload")
+	}
+
+	req.Collection = string(payload[pos : pos+int(collLen)])
+	pos += int(collLen)
+
+	schemaLen := binary.BigEndian.Uint32(payload[pos:])
+	pos += 4
+
+	if len(payload) < pos+int(schemaLen) {
+		return nil, fmt.Errorf("invalid SCHEMA_REGISTER payload")
+	}
+
+	req.Value = payload[pos : pos+int(schemaLen)]
+
+	return req, nil
+}
 func DecodeResponse(data []byte) (*Response, error) {
 	if len(data) < 5 {
 		return nil, fmt.Errorf("response too short")
@@ -1619,4 +1683,68 @@ func EncodeSPublishBatchRequest(topic string, messages []*BatchMessage) []byte {
 	}
 
 	return buf
+}
+
+// FQL Schema Register Request
+func EncodeSchemaRegisterFQLRequest(reqID string, fql string) []byte {
+	// 5 = OpCode(1) + ReqIDLen(4)
+	buf := make([]byte, 5+len(reqID)+4+len(fql))
+	pos := 0
+
+	buf[pos] = OpSchemaRegisterFQL
+	pos++
+
+	// Request ID
+	binary.BigEndian.PutUint32(buf[pos:], uint32(len(reqID)))
+	pos += 4
+	copy(buf[pos:], reqID)
+	pos += len(reqID)
+
+	// FQL Content
+	binary.BigEndian.PutUint32(buf[pos:], uint32(len(fql)))
+	pos += 4
+	copy(buf[pos:], fql)
+	pos += len(fql)
+
+	return buf
+}
+
+func decodeSchemaRegisterFQLRequest(payload []byte) (*Request, error) {
+	pos := 0
+
+	// Check for empty payload
+	if len(payload) == 0 {
+		return nil, fmt.Errorf("empty payload")
+	}
+
+	// Helper to safely read strings
+	readString := func() (string, error) {
+		if pos+4 > len(payload) {
+			return "", fmt.Errorf("buffer text too short")
+		}
+		length := int(binary.BigEndian.Uint32(payload[pos:]))
+		pos += 4
+		if pos+length > len(payload) {
+			return "", fmt.Errorf("buffer text too short")
+		}
+		str := string(payload[pos : pos+length])
+		pos += length
+		return str, nil
+	}
+
+	reqID, err := readString()
+	if err != nil {
+		return nil, err
+	}
+
+	fql, err := readString()
+	if err != nil {
+		return nil, err
+	}
+
+	return &Request{
+		OpCode: OpSchemaRegisterFQL,
+		ID:     reqID,
+		Key:    fql, // We store the FQL string in Key for convenience
+	}, nil
 }

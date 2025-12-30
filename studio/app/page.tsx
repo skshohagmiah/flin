@@ -115,6 +115,21 @@ export default function Home() {
                 <ArrowRight className="h-5 w-5 text-muted-foreground group-hover:text-primary group-hover:translate-x-1 transition-all" />
               </div>
             </Link>
+
+            <Link href="/db" className="group relative overflow-hidden rounded-xl bg-card border border-border p-6 hover:border-primary/50 transition-all duration-300 hover:shadow-lg hover:shadow-primary/5">
+              <div className="flex items-start justify-between">
+                <div className="space-y-2">
+                  <div className="p-2 w-fit rounded-lg bg-blue-500/10 text-blue-500">
+                    <Database className="h-6 w-6" />
+                  </div>
+                  <h3 className="font-semibold text-foreground">Wide-Column DB</h3>
+                  <p className="text-sm text-muted-foreground max-w-[280px]">
+                    Manage Cassandra-like tables and run FQL queries.
+                  </p>
+                </div>
+                <ArrowRight className="h-5 w-5 text-muted-foreground group-hover:text-primary group-hover:translate-x-1 transition-all" />
+              </div>
+            </Link>
           </div>
         </div>
 

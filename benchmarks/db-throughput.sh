@@ -101,6 +101,28 @@ func main() {
 	fmt.Println("==================================")
 	fmt.Println()
 	
+	fmt.Println("📝 Document Store Throughput Test")
+	fmt.Println("==================================")
+	fmt.Println()
+	
+    // Register Schema (FQL) for optimization
+    fmt.Println("📋 Registering FQL Schema...")
+    err = client.DB.RegisterFQL(`
+        CREATE TABLE docs (
+            worker int,
+            counter int,
+            data text,
+            timestamp int,
+            PRIMARY KEY (worker, counter)
+        );
+    `)
+    if err != nil {
+        fmt.Printf("⚠️ Failed to register schema (might already exist): %v\n", err)
+    } else {
+        fmt.Println("✅ Schema registered: PRIMARY KEY (worker, counter)")
+    }
+    fmt.Println()
+
 	// Run CREATE test
 	fmt.Println("🟡 CREATE Test (document inserts)")
 	fmt.Println("-----------------------------------")
@@ -158,14 +180,15 @@ func main() {
 	fmt.Println()
 	
 	// Create index on "worker" field for better query performance
-	fmt.Println("📇 Creating index on 'worker' field...")
-	err = client.DB.CreateIndex("docs", "worker")
-	if err != nil {
-		fmt.Printf("   ⚠️  Index creation error (non-critical): %v\n", err)
-	} else {
-		fmt.Println("   ✅ Index created successfully")
-	}
-	fmt.Println()
+	// NOTE: Index creation disabled due to timeout issue
+	// fmt.Println("📇 Creating index on 'worker' field...")
+	// err = client.DB.CreateIndex("docs", "worker")
+	// if err != nil {
+	// 	fmt.Printf("   ⚠️  Index creation error (non-critical): %v\n", err)
+	// } else {
+	// 	fmt.Println("   ✅ Index created successfully")
+	// }
+	// fmt.Println()
 	
 	// Run READ test
 	fmt.Println("🟢 READ Test (document queries)")
@@ -300,9 +323,9 @@ func randString(length int) string {
 EOF
 
 # Replace placeholders
-sed -i "s/CONCURRENCY_PLACEHOLDER/$CONCURRENCY/g" main.go
-sed -i "s/DURATION_PLACEHOLDER/$DURATION/g" main.go
-sed -i "s/DOC_SIZE_PLACEHOLDER/$DOC_SIZE/g" main.go
+perl -pi -e "s/CONCURRENCY_PLACEHOLDER/$CONCURRENCY/g" main.go
+perl -pi -e "s/DURATION_PLACEHOLDER/$DURATION/g" main.go
+perl -pi -e "s/DOC_SIZE_PLACEHOLDER/$DOC_SIZE/g" main.go
 
 echo "📊 Running document store throughput benchmark..."
 echo ""

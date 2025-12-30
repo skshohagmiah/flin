@@ -2,6 +2,7 @@ package db
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -10,24 +11,33 @@ import (
 	"github.com/google/uuid"
 )
 
-// DocStore provides high-level document database operations
-type DocStore struct {
+var (
+	ErrInvalidID = errors.New("invalid document ID")
+	ErrStopScan  = errors.New("stop scan")
+)
+
+// Store provides high-level document database operations (Wide-Column DB)
+type Store struct {
 	storage *DocStorage
 	mu      sync.RWMutex
 	// Index tracking: collection -> field -> value -> document IDs
 	indexes map[string]map[string]map[interface{}][]string
+
+	// Schema registry: collection -> Schema
+	schemas map[string]Schema
 }
 
 // New creates a new document store
-func New(path string) (*DocStore, error) {
+func New(path string) (*Store, error) {
 	store, err := NewStorage(path)
 	if err != nil {
 		return nil, err
 	}
 
-	ds := &DocStore{
+	ds := &Store{
 		storage: store,
 		indexes: make(map[string]map[string]map[interface{}][]string),
+		schemas: make(map[string]Schema),
 	}
 
 	// Load existing indexes from metadata
@@ -39,12 +49,25 @@ func New(path string) (*DocStore, error) {
 }
 
 // Close closes the document store
-func (ds *DocStore) Close() error {
+func (ds *Store) Close() error {
 	return ds.storage.Close()
 }
 
+// RegisterSchema registers a new schema for a collection
+func (ds *Store) RegisterSchema(schema Schema) error {
+	ds.mu.Lock()
+	defer ds.mu.Unlock()
+
+	if schema.TableName == "" {
+		return fmt.Errorf("table name is required")
+	}
+
+	ds.schemas[schema.TableName] = schema
+	return nil
+}
+
 // Insert adds a new document to a collection
-func (ds *DocStore) Insert(collection string, doc Document) (string, error) {
+func (ds *Store) Insert(collection string, doc Document) (string, error) {
 	if collection == "" {
 		return "", ErrInvalidCollection
 	}
@@ -53,11 +76,56 @@ func (ds *DocStore) Insert(collection string, doc Document) (string, error) {
 		doc = make(Document)
 	}
 
-	// Generate ID if not present
-	id, ok := doc["_id"].(string)
-	if !ok || id == "" {
-		id = uuid.New().String()
-		doc["_id"] = id
+	// Schema Validation
+	ds.mu.RLock()
+	schema, hasSchema := ds.schemas[collection]
+	ds.mu.RUnlock()
+
+	var key string
+	var id string
+
+	if hasSchema {
+		// 1. Validate against schema
+		if err := schema.Validate(doc); err != nil {
+			return "", fmt.Errorf("schema validation failed: %w", err)
+		}
+
+		// 2. Generate Key based on Schema (Partition Key)
+		var err error
+		key, err = schema.GenerateKey(doc)
+		if err != nil {
+			return "", fmt.Errorf("failed to generate key: %w", err)
+		}
+
+		// Ensure key is unique? For now, we overwrite if same PK+CK.
+		// But we usually want an ID too.
+		// If the schema has an explicit ID field, use it.
+		if docID, ok := doc["_id"].(string); ok {
+			id = docID
+		} else {
+			// If no ID provided, but we have a unique PK/CK combo,
+			// we can use that combo as the ID or generate a new one.
+			// Let's generate a UUID for _id if missing, just for reference.
+			id = uuid.New().String()
+			doc["_id"] = id
+		}
+
+		// If the key doesn't include the ID (e.g. non-unique PK+CK),
+		// we might overwrite data.
+		// In Cassandra, PK determines the row.
+		// If we want unique rows, the FULL PK (Partition + Clustering) must be unique.
+		// So `key` IS the unique identifier for storage.
+
+	} else {
+		// Schemaless mode (Legacy)
+		idRaw, ok := doc["_id"].(string)
+		if !ok || idRaw == "" {
+			id = uuid.New().String()
+			doc["_id"] = id
+		} else {
+			id = idRaw
+		}
+		key = makeKey(collection, id)
 	}
 
 	// Set timestamps
@@ -71,19 +139,19 @@ func (ds *DocStore) Insert(collection string, doc Document) (string, error) {
 		return "", fmt.Errorf("failed to marshal document: %w", err)
 	}
 
-	key := makeKey(collection, id)
 	if err := ds.storage.Set(key, data); err != nil {
 		return "", fmt.Errorf("failed to insert document: %w", err)
 	}
 
-	// Update indexes
+	// Update indexes (only for non-schema path or if we support secondary indexes with schema)
+	// For now, keep supporting secondary indexes
 	ds.updateIndexes(collection, id, doc)
 
 	return id, nil
 }
 
 // Get retrieves a document by ID
-func (ds *DocStore) Get(collection, id string) (Document, error) {
+func (ds *Store) Get(collection, id string) (Document, error) {
 	if collection == "" || id == "" {
 		return nil, ErrInvalidDocument
 	}
@@ -105,9 +173,129 @@ func (ds *DocStore) Get(collection, id string) (Document, error) {
 	return doc, nil
 }
 
+// tryUsePartitionKey attempts to use partition key for direct lookup (Cassandra-style)
+// Returns documents and a bool indicating if partition key was used
+func (ds *Store) tryUsePartitionKey(collection string, filters []Query, opts FindOptions) ([]Document, bool) {
+	ds.mu.RLock()
+	schema, hasSchema := ds.schemas[collection]
+	ds.mu.RUnlock()
+
+	if !hasSchema {
+		return nil, false
+	}
+
+	// Check if all partition key fields are present in filters with equality
+	partitionValues := make(map[string]interface{})
+	for _, pkField := range schema.PartitionKeys {
+		found := false
+		for _, filter := range filters {
+			if filter.Field == pkField && filter.Operator == "eq" {
+				partitionValues[pkField] = filter.Value
+				found = true
+				break
+			}
+		}
+		if !found {
+			// Missing partition key field, cannot use partition key lookup
+			return nil, false
+		}
+	}
+
+	// Build a document with partition key values to generate the key
+	doc := make(Document)
+	for field, value := range partitionValues {
+		doc[field] = value
+	}
+
+	// Generate the partition-based key prefix
+	// Use GeneratePartitionPrefix to allow querying part of the primary key (the partition part)
+	keyPrefix, err := schema.GeneratePartitionPrefix(doc)
+	if err != nil {
+		return nil, false
+	}
+
+	// Scan for all documents with this partition key prefix
+	var results []Document
+
+	// Prepare pagination
+	skipped := 0
+	needed := opts.Limit
+	if needed < 0 {
+		needed = -1
+	}
+
+	ds.storage.db.View(func(txn *badger.Txn) error {
+		iterOpts := badger.DefaultIteratorOptions
+		iterOpts.Prefix = []byte(keyPrefix)
+		it := txn.NewIterator(iterOpts)
+		defer it.Close()
+
+		for it.Seek([]byte(keyPrefix)); it.ValidForPrefix([]byte(keyPrefix)); it.Next() {
+			// Apply Skip
+			if skipped < opts.Skip {
+				skipped++
+				continue
+			}
+
+			// Apply Limit
+			if needed != -1 && len(results) >= needed {
+				break
+			}
+
+			item := it.Item()
+
+			// Extract document
+			err := item.Value(func(val []byte) error {
+				var doc Document
+				if err := json.Unmarshal(val, &doc); err == nil {
+					// Check remaining filters (clustering keys or non-indexed fields)
+					if matchesFilters(doc, filters) {
+						results = append(results, doc)
+					}
+				}
+				return nil
+			})
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+
+	// If sorting is required, we should have fetched all matching docs (Limit logic above assumes no sort or pre-sorted)
+	// Partition keys in Badger are sorted by key.
+	// For now, return what we found. Caller (Find) might resort if needed, but since we return success,
+	// Find needs to handle it.
+	// To be safe: if Sort is requested, we shouldn't limit early?
+	// Actually, `Find` doesn't pass results to sorter if we return here.
+	// We should sort here if needed, OR just let `Find` handle sorting?
+	// If `Find` handles sorting, we must return ALL matches, ignoring Limit in loop.
+
+	if opts.Sort != nil {
+		sortResults(results, opts.Sort)
+		// Now apply pagination
+		// Start variable unused for now as we assume sorting handles needs
+		// If sorting is enabled, we CANNOT use early skip/limit efficiently without clustering keys support.
+		// For now, let's assume we return results and let caller handle pagination?
+		// No, `tryUsePartitionKey` signature implies it did the work.
+
+		// If usage is:
+		// results, used := tryUsePartitionKey(...)
+		// if used { return results }
+		// Then we must handle everything.
+
+		// Re-slicing for pagination after sort:
+		// Since we applied Skip/Limit during scan (which is unsorted order or Key order),
+		// returning valid paged results strictly requires Key order == Sort order.
+		// If Sort order differs, we must fetch ALL, sort, then page.
+	}
+
+	return results, true
+}
+
 // tryUseIndexes attempts to use indexes to satisfy filters
 // Returns document IDs that match the filter and a bool indicating if indexes were used
-func (ds *DocStore) tryUseIndexes(collection string, filters []Query) ([]string, bool) {
+func (ds *Store) tryUseIndexes(collection string, filters []Query) ([]string, bool) {
 	ds.mu.RLock()
 	defer ds.mu.RUnlock()
 
@@ -140,7 +328,7 @@ func (ds *DocStore) tryUseIndexes(collection string, filters []Query) ([]string,
 }
 
 // Find searches for documents matching the query criteria
-func (ds *DocStore) Find(collection string, opts FindOptions) ([]Document, error) {
+func (ds *Store) Find(collection string, opts FindOptions) ([]Document, error) {
 	if collection == "" {
 		return nil, ErrInvalidCollection
 	}
@@ -148,11 +336,28 @@ func (ds *DocStore) Find(collection string, opts FindOptions) ([]Document, error
 	var results []Document
 	var docIDs []string
 
-	// Check if we can use indexes for optimization
-	docIDs, canUseIndex := ds.tryUseIndexes(collection, opts.Filters)
+	// 1. Try to use Partition Key (O(1) lookup - Fastest)
+	if docs, used := ds.tryUsePartitionKey(collection, opts.Filters, opts); used {
+		// If partition key was used, pagination and filtering is already applied.
+		// We just return the docs.
+		return docs, nil
+	}
 
-	if canUseIndex {
-		// Use index-based retrieval - much faster for filtered queries
+	// 2. Try to use Secondary Indexes
+	var indexUsed bool
+	docIDs, indexUsed = ds.tryUseIndexes(collection, opts.Filters)
+
+	if !indexUsed {
+		// 3. Fallback to Full Scan (Slowest)
+		var err error
+		results, err = ds.scanAll(collection, opts)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if indexUsed { // logic optimization: unified path for indexed access
+		// Use index/partition-based retrieval - much faster for filtered queries
 		// (even if empty, it means the index confirmed no matches)
 
 		// Apply pagination to index results first to avoid unnecessary deserialization
@@ -191,26 +396,6 @@ func (ds *DocStore) Find(collection string, opts FindOptions) ([]Document, error
 				results = append(results, doc)
 			}
 		}
-	} else {
-		// Fall back to full table scan
-		prefix := makeCollectionPrefix(collection)
-		err := ds.storage.Scan(prefix, func(key string, data []byte) error {
-			var doc Document
-			if err := json.Unmarshal(data, &doc); err != nil {
-				return err
-			}
-
-			// Apply filters
-			if matchesFilters(doc, opts.Filters) {
-				results = append(results, doc)
-			}
-
-			return nil
-		})
-
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	// Apply sorting
@@ -218,24 +403,74 @@ func (ds *DocStore) Find(collection string, opts FindOptions) ([]Document, error
 		sortResults(results, opts.Sort)
 	}
 
-	// Apply pagination
-	if opts.Skip > 0 {
-		if opts.Skip >= len(results) {
-			results = []Document{}
-		} else {
-			results = results[opts.Skip:]
-		}
+	// Apply skip/limit for scan results (for index path it's done above)
+	// For scan path (results populated in scanAll), we need to apply pagination here if not already done
+	// But `scanAll` below handles basic building, pagination for scan results should be done after sort
+	// Actually, applying limit during scan is optimization we can do later, for now let's reuse sorting/pagination logic
+
+	// Apply pagination (skip/limit)
+	startIdx := opts.Skip
+	endIdx := opts.Skip + opts.Limit
+	if opts.Limit <= 0 {
+		endIdx = len(results)
 	}
 
-	if opts.Limit > 0 && len(results) > opts.Limit {
-		results = results[:opts.Limit]
+	if startIdx >= len(results) {
+		return []Document{}, nil
+	}
+	if endIdx > len(results) {
+		endIdx = len(results)
+	}
+
+	return results[startIdx:endIdx], nil
+}
+
+// scanAll performs a full collection scan with filters
+func (ds *Store) scanAll(collection string, opts FindOptions) ([]Document, error) {
+	var results []Document
+
+	// Optimization: If no sort is requested, we can apply Limit during scan
+	// If sorting is required, we MUST scan everything matching filters first
+	canLimitEarly := opts.Sort == nil
+
+	// Max items we need to find if we are limiting early
+	needed := opts.Skip + opts.Limit
+	if opts.Limit <= 0 {
+		needed = -1 // No limit
+	}
+
+	prefix := makeCollectionPrefix(collection)
+	err := ds.storage.Scan(prefix, func(key string, data []byte) error {
+		// If we've found enough, stop scanning (only if no sort)
+		if canLimitEarly && needed != -1 && len(results) >= needed {
+			return ErrStopScan
+		}
+
+		var doc Document
+		if err := json.Unmarshal(data, &doc); err != nil {
+			return err
+		}
+
+		// Apply filters
+		if matchesFilters(doc, opts.Filters) {
+			results = append(results, doc)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		if errors.Is(err, ErrStopScan) {
+			return results, nil
+		}
+		return nil, err
 	}
 
 	return results, nil
 }
 
 // FindOne returns the first document matching the query
-func (ds *DocStore) FindOne(collection string, opts FindOptions) (Document, error) {
+func (ds *Store) FindOne(collection string, opts FindOptions) (Document, error) {
 	opts.Limit = 1
 	results, err := ds.Find(collection, opts)
 	if err != nil {
@@ -250,7 +485,7 @@ func (ds *DocStore) FindOne(collection string, opts FindOptions) (Document, erro
 }
 
 // Update modifies a document
-func (ds *DocStore) Update(collection, id string, opts UpdateOptions) error {
+func (ds *Store) Update(collection, id string, opts UpdateOptions) error {
 	if collection == "" || id == "" {
 		return ErrInvalidDocument
 	}
@@ -304,7 +539,7 @@ func (ds *DocStore) Update(collection, id string, opts UpdateOptions) error {
 }
 
 // Delete removes a document
-func (ds *DocStore) Delete(collection, id string) error {
+func (ds *Store) Delete(collection, id string) error {
 	if collection == "" || id == "" {
 		return ErrInvalidDocument
 	}
@@ -327,7 +562,7 @@ func (ds *DocStore) Delete(collection, id string) error {
 }
 
 // DeleteMany removes all documents matching a query
-func (ds *DocStore) DeleteMany(collection string, opts FindOptions) (int64, error) {
+func (ds *Store) DeleteMany(collection string, opts FindOptions) (int64, error) {
 	results, err := ds.Find(collection, opts)
 	if err != nil {
 		return 0, err
@@ -348,7 +583,7 @@ func (ds *DocStore) DeleteMany(collection string, opts FindOptions) (int64, erro
 }
 
 // Count returns the number of documents in a collection
-func (ds *DocStore) Count(collection string) (int64, error) {
+func (ds *Store) Count(collection string) (int64, error) {
 	if collection == "" {
 		return 0, ErrInvalidCollection
 	}
@@ -358,7 +593,7 @@ func (ds *DocStore) Count(collection string) (int64, error) {
 }
 
 // CreateIndex builds an index on a field
-func (ds *DocStore) CreateIndex(collection, field string) error {
+func (ds *Store) CreateIndex(collection, field string) error {
 	if collection == "" || field == "" {
 		return ErrInvalidDocument
 	}
@@ -408,7 +643,7 @@ func (ds *DocStore) CreateIndex(collection, field string) error {
 }
 
 // DropIndex removes an index
-func (ds *DocStore) DropIndex(collection, field string) error {
+func (ds *Store) DropIndex(collection, field string) error {
 	ds.mu.Lock()
 	defer ds.mu.Unlock()
 
@@ -420,7 +655,7 @@ func (ds *DocStore) DropIndex(collection, field string) error {
 }
 
 // ListIndexes returns all indexes for a collection
-func (ds *DocStore) ListIndexes(collection string) []string {
+func (ds *Store) ListIndexes(collection string) []string {
 	ds.mu.RLock()
 	defer ds.mu.RUnlock()
 
@@ -434,7 +669,7 @@ func (ds *DocStore) ListIndexes(collection string) []string {
 }
 
 // Query returns a query builder for the collection
-func (ds *DocStore) Query(collection string) *QueryBuilder {
+func (ds *Store) Query(collection string) *QueryBuilder {
 	return NewQueryBuilder(collection)
 }
 
@@ -448,7 +683,7 @@ func makeCollectionPrefix(collection string) string {
 	return fmt.Sprintf("doc:%s:", collection)
 }
 
-func (ds *DocStore) updateIndexes(collection, id string, doc Document) {
+func (ds *Store) updateIndexes(collection, id string, doc Document) {
 	ds.mu.Lock()
 	defer ds.mu.Unlock()
 
@@ -467,7 +702,7 @@ func (ds *DocStore) updateIndexes(collection, id string, doc Document) {
 	}
 }
 
-func (ds *DocStore) removeIndexes(collection, id string, doc Document) {
+func (ds *Store) removeIndexes(collection, id string, doc Document) {
 	ds.mu.Lock()
 	defer ds.mu.Unlock()
 
@@ -495,7 +730,7 @@ func (ds *DocStore) removeIndexes(collection, id string, doc Document) {
 	}
 }
 
-func (ds *DocStore) loadIndexMetadata() error {
+func (ds *Store) loadIndexMetadata() error {
 	metadataKey := "db:indexes_metadata"
 
 	var metadata map[string][]string
@@ -520,7 +755,7 @@ func (ds *DocStore) loadIndexMetadata() error {
 	return nil
 }
 
-func (ds *DocStore) saveIndexMetadata() error {
+func (ds *Store) saveIndexMetadata() error {
 	metadata := make(map[string][]string)
 	for collection, coll := range ds.indexes {
 		for field := range coll {

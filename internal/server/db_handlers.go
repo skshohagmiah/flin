@@ -16,8 +16,8 @@ import (
 func (c *Connection) processBinaryDocInsert(req *protocol.Request, startTime time.Time) {
 	log.Printf("[DOC] INSERT start: collection=%s", req.Collection)
 
-	docStore := c.server.db
-	if docStore == nil {
+	store := c.server.db
+	if store == nil {
 		log.Printf("[DOC] INSERT error: document store not available")
 		c.sendBinaryError(fmt.Errorf("document store not available"))
 		c.server.opsErrors.Add(1)
@@ -35,7 +35,7 @@ func (c *Connection) processBinaryDocInsert(req *protocol.Request, startTime tim
 	}
 
 	// Insert the document
-	id, err := docStore.Insert(req.Collection, doc)
+	id, err := store.Insert(req.Collection, doc)
 	if err != nil {
 		log.Printf("[DOC] INSERT error: %v", err)
 		c.sendBinaryError(err)
@@ -59,8 +59,8 @@ func (c *Connection) processBinaryDocInsert(req *protocol.Request, startTime tim
 func (c *Connection) processBinaryDocFind(req *protocol.Request, startTime time.Time) {
 	log.Printf("[DOC] FIND start: collection=%s", req.Collection)
 
-	docStore := c.server.db
-	if docStore == nil {
+	store := c.server.db
+	if store == nil {
 		log.Printf("[DOC] FIND error: document store not available")
 		c.sendBinaryError(fmt.Errorf("document store not available"))
 		c.server.opsErrors.Add(1)
@@ -81,7 +81,7 @@ func (c *Connection) processBinaryDocFind(req *protocol.Request, startTime time.
 	opts := buildFindOptions(queryData)
 
 	// Execute find
-	results, err := docStore.Find(req.Collection, opts)
+	results, err := store.Find(req.Collection, opts)
 	if err != nil {
 		log.Printf("[DOC] FIND error: %v", err)
 		c.sendBinaryError(err)
@@ -112,8 +112,8 @@ func (c *Connection) processBinaryDocFind(req *protocol.Request, startTime time.
 
 // processBinaryDocUpdate handles document update operations
 func (c *Connection) processBinaryDocUpdate(req *protocol.Request, startTime time.Time) {
-	docStore := c.server.db
-	if docStore == nil {
+	store := c.server.db
+	if store == nil {
 		c.sendBinaryError(fmt.Errorf("document store not available"))
 		c.server.opsErrors.Add(1)
 		return
@@ -145,7 +145,7 @@ func (c *Connection) processBinaryDocUpdate(req *protocol.Request, startTime tim
 	// Find document matching query and update
 	// buildFindOptions expects a map with "filters" key, which optsData has
 	findOpts := buildFindOptions(optsData)
-	results, err := docStore.Find(req.Collection, findOpts)
+	results, err := store.Find(req.Collection, findOpts)
 	if err != nil {
 		c.sendBinaryError(err)
 		c.server.opsErrors.Add(1)
@@ -163,7 +163,7 @@ func (c *Connection) processBinaryDocUpdate(req *protocol.Request, startTime tim
 			Set:   db.Document(updateData),
 			Merge: true,
 		}
-		if err := docStore.Update(req.Collection, id, updateOpts); err == nil {
+		if err := store.Update(req.Collection, id, updateOpts); err == nil {
 			updated++
 		}
 	}
@@ -179,8 +179,8 @@ func (c *Connection) processBinaryDocUpdate(req *protocol.Request, startTime tim
 
 // processBinaryDocDelete handles document delete operations
 func (c *Connection) processBinaryDocDelete(req *protocol.Request, startTime time.Time) {
-	docStore := c.server.db
-	if docStore == nil {
+	store := c.server.db
+	if store == nil {
 		c.sendBinaryError(fmt.Errorf("document store not available"))
 		c.server.opsErrors.Add(1)
 		return
@@ -199,7 +199,7 @@ func (c *Connection) processBinaryDocDelete(req *protocol.Request, startTime tim
 	opts := buildFindOptions(queryData)
 
 	// Delete documents
-	deleted, err := docStore.DeleteMany(req.Collection, opts)
+	deleted, err := store.DeleteMany(req.Collection, opts)
 	if err != nil {
 		c.sendBinaryError(err)
 		c.server.opsErrors.Add(1)
@@ -262,8 +262,8 @@ func buildFindOptions(queryData map[string]interface{}) db.FindOptions {
 func (c *Connection) processBinaryDocIndex(req *protocol.Request, startTime time.Time) {
 	log.Printf("[DOC] INDEX start: collection=%s, field=%s", req.Collection, req.Key)
 
-	docStore := c.server.db
-	if docStore == nil {
+	store := c.server.db
+	if store == nil {
 		log.Printf("[DOC] INDEX error: document store not available")
 		c.sendBinaryError(fmt.Errorf("document store not available"))
 		c.server.opsErrors.Add(1)
@@ -271,7 +271,7 @@ func (c *Connection) processBinaryDocIndex(req *protocol.Request, startTime time
 	}
 
 	// Create index on the specified field
-	err := docStore.CreateIndex(req.Collection, req.Key)
+	err := store.CreateIndex(req.Collection, req.Key)
 	if err != nil {
 		log.Printf("[DOC] INDEX error: %v", err)
 		c.sendBinaryError(err)
@@ -298,4 +298,92 @@ func toString(val interface{}) string {
 	default:
 		return fmt.Sprintf("%v", v)
 	}
+}
+
+// processBinarySchemaRegister handles schema registration operations
+func (c *Connection) processBinarySchemaRegister(req *protocol.Request, startTime time.Time) {
+	log.Printf("[SCHEMA] REGISTER start: collection=%s", req.Collection)
+
+	store := c.server.db
+	if store == nil {
+		log.Printf("[SCHEMA] REGISTER error: document store not available")
+		c.sendBinaryError(fmt.Errorf("document store not available"))
+		c.server.opsErrors.Add(1)
+		return
+	}
+
+	// Parse the schema JSON
+	var schema db.Schema
+	err := json.Unmarshal(req.Value, &schema)
+	if err != nil {
+		log.Printf("[SCHEMA] REGISTER error: invalid JSON: %v", err)
+		c.sendBinaryError(fmt.Errorf("invalid schema JSON: %w", err))
+		c.server.opsErrors.Add(1)
+		return
+	}
+
+	// Ensure the schema table name matches the collection
+	if schema.TableName == "" {
+		schema.TableName = req.Collection
+	}
+
+	// Register the schema
+	err = store.RegisterSchema(schema)
+	if err != nil {
+		log.Printf("[SCHEMA] REGISTER error: %v", err)
+		c.sendBinaryError(err)
+		c.server.opsErrors.Add(1)
+		return
+	}
+
+	duration := time.Since(startTime)
+	log.Printf("[SCHEMA] REGISTER complete: collection=%s, duration=%v", req.Collection, duration)
+
+	// Send success response using the helper method
+	response := protocol.EncodeOKResponse()
+	c.sendBinaryResponse(response, startTime)
+}
+
+// processBinarySchemaRegisterFQL handles raw FQL schema registration
+func (c *Connection) processBinarySchemaRegisterFQL(req *protocol.Request, startTime time.Time) {
+	log.Printf("[SCHEMA] REGISTER FQL start: reqID=%s", req.ID)
+
+	store := c.server.db
+	if store == nil {
+		log.Printf("[SCHEMA] REGISTER FQL error: document store not available")
+		c.sendBinaryError(fmt.Errorf("document store not available"))
+		c.server.opsErrors.Add(1)
+		return
+	}
+
+	fql := req.Key
+	if fql == "" {
+		c.sendBinaryError(fmt.Errorf("empty schema definition"))
+		return
+	}
+
+	// Parse FQL
+	schemas, err := db.ParseSchema(fql)
+	if err != nil {
+		log.Printf("[SCHEMA] REGISTER FQL parse error: %v", err)
+		c.sendBinaryError(fmt.Errorf("parse error: %w", err))
+		return
+	}
+
+	// Register Schemas
+	for _, s := range schemas {
+		log.Printf("   Registering table: %s", s.TableName)
+		if err := store.RegisterSchema(s); err != nil {
+			log.Printf("[SCHEMA] REGISTER FQL register error: %v", err)
+			c.sendBinaryError(fmt.Errorf("register error: %w", err))
+			return
+		}
+	}
+
+	duration := time.Since(startTime)
+	log.Printf("[SCHEMA] REGISTER FQL complete: tables=%d, duration=%v", len(schemas), duration)
+
+	// Send success response
+	response := protocol.EncodeOKResponse()
+	c.sendBinaryResponse(response, startTime)
 }

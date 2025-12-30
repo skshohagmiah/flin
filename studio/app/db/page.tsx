@@ -3,20 +3,20 @@ export default function DbPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="space-y-2">
-        <h1 className="text-3xl font-bold tracking-tight">Database</h1>
+        <h1 className="text-3xl font-bold tracking-tight">Wide-Column Database</h1>
         <p className="text-sm text-muted-foreground">
-          Future Flin database / table abstractions will be managed here. The layout is ready for when those features land.
+          Manage your Cassandra-like tables and schema definitions using FQL (Flin Query Language).
         </p>
       </div>
 
       {/* Grid Layout */}
       <div className="grid gap-6 md:grid-cols-2">
-        {/* Schemas / Collections Card */}
+        {/* Schemas / Tables Card */}
         <div className="rounded-lg border border-border/50 bg-card/50 backdrop-blur-sm overflow-hidden flex flex-col">
           <div className="px-6 py-4 border-b border-border/50 bg-gradient-to-b from-muted/30 to-transparent">
-            <h2 className="text-sm font-semibold text-foreground">Schemas & Collections</h2>
+            <h2 className="text-sm font-semibold text-foreground">Schemas & Tables</h2>
             <p className="mt-1 text-xs text-muted-foreground">
-              Visualize logical databases, schemas or collections mapped onto Flin primitives.
+              Visualize keyspaces and tables defined via FQL.
             </p>
           </div>
           <div className="flex-1 flex items-center justify-center px-6 py-12">
@@ -24,18 +24,18 @@ export default function DbPage() {
               <svg className="w-12 h-12 text-muted-foreground/30 mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7m0 0c0 2.21-3.582 4-8 4s-8-1.79-8-4m0 0c0-2.21 3.582-4 8-4s8 1.79 8 4m0 6c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
               </svg>
-              <p className="text-xs text-muted-foreground">Schema list placeholder</p>
-              <p className="text-[11px] text-muted-foreground/60 mt-1">Ready for database abstractions</p>
+              <p className="text-xs text-muted-foreground">No tables found</p>
+              <p className="text-[11px] text-muted-foreground/60 mt-1">Register schemas via `OpSchemaRegisterFQL`</p>
             </div>
           </div>
         </div>
 
-        {/* Query Playground Card */}
+        {/* FQL Playground Card */}
         <div className="rounded-lg border border-border/50 bg-card/50 backdrop-blur-sm overflow-hidden flex flex-col">
           <div className="px-6 py-4 border-b border-border/50 bg-gradient-to-b from-muted/30 to-transparent">
-            <h2 className="text-sm font-semibold text-foreground">Query Playground</h2>
+            <h2 className="text-sm font-semibold text-foreground">FQL Query Playground</h2>
             <p className="mt-1 text-xs text-muted-foreground">
-              Run read/write queries against Flin once a query layer exists.
+              Execute CQL-compatible queries against your cluster.
             </p>
           </div>
           <div className="flex-1 flex items-center justify-center px-6 py-12">
@@ -43,8 +43,8 @@ export default function DbPage() {
               <svg className="w-12 h-12 text-muted-foreground/30 mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M14 10l-2 1m0 0l-2-1m2 1v2.5M20 7l-2 1m2-1l-2-1m2 1v2.5M14 4l-2 1m2-1l-2-1m2 1v2.5" />
               </svg>
-              <p className="text-xs text-muted-foreground">Query editor placeholder</p>
-              <p className="text-[11px] text-muted-foreground/60 mt-1">Execute queries on your Flin cluster</p>
+              <p className="text-xs text-muted-foreground">FQL Editor</p>
+              <p className="text-[11px] text-muted-foreground/60 mt-1">SELECT * FROM users WHERE id = ...</p>
             </div>
           </div>
         </div>

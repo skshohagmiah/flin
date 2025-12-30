@@ -1,6 +1,6 @@
-# 🚀 Flin - High-Performance Distributed Data Platform
+# 🚀 Flin - Distributed Messaging and Database System
 
-A blazing-fast, distributed data platform combining **Key-Value Store**, **Message Queue**, **Stream Processing**, and **Document Database** in a single unified system.
+A blazing-fast, distributed system combining **Key-Value Store**, **Message Queue**, **Stream Processing**, and **Wide-Column Database** in a single unified platform.
 
 ## ⚡ Performance Highlights
 
@@ -11,7 +11,7 @@ A blazing-fast, distributed data platform combining **Key-Value Store**, **Messa
 | **Message Queue** | 104K push/sec | 9.6μs | Unified port with KV |
 | **Message Queue** | 100K pop/sec | 10μs | BadgerDB persistence |
 | **Stream** | High throughput | Low latency | Kafka-like pub/sub |
-| **Document DB** | 76K inserts/sec | 13μs | MongoDB-like API |
+| **Database** | 76K inserts/sec | 13μs | Cassandra-like (CQL) |
 
 
 ## 🎯 Key Features
@@ -41,13 +41,14 @@ A blazing-fast, distributed data platform combining **Key-Value Store**, **Messa
 - ✅ **Retention policies** for automatic cleanup
 - ✅ **At-least-once** delivery semantics
 
-### 📄 Document Database
+### �️ Wide-Column Database
 - ✅ **76K inserts/sec** throughput
 - ✅ **13μs average latency**
-- ✅ **MongoDB-like** document model
+- ✅ **Cassandra-like** architecture (Partition/Clustering keys)
+- ✅ **FQL (Flin Query Language)** schema support (CQL-compatible)
 - ✅ **Prisma-like** fluent query builder
-- ✅ **Secondary indexes** for fast queries
-- ✅ **Flexible schema** with JSON documents
+- ✅ **Efficient Deep Pagination** with secondary indexes
+- ✅ **Flexible storage** supporting both structured and semi-structured data
 - ✅ **ACID transactions** via BadgerDB
 
 ## 🏗️ Architecture
@@ -68,7 +69,7 @@ Flin uses a **modular, layered architecture**:
 │  ├─ KV Handlers                                 │
 │  ├─ Queue Handlers                              │
 │  ├─ Stream Handlers                             │
-│  └─ Document Handlers                           │
+│  └─ Database Handlers                           │
 └─────────────────────────────────────────────────┘
                       ▼
 ┌─────────────────────────────────────────────────┐
@@ -76,7 +77,7 @@ Flin uses a **modular, layered architecture**:
 │  ├─ internal/kv      (KV operations)            │
 │  ├─ internal/queue   (Queue operations)         │
 │  ├─ internal/stream  (Stream operations)        │
-│  └─ internal/db      (Document operations)      │
+│  └─ internal/db      (Database operations)      │
 └─────────────────────────────────────────────────┘
                       ▼
 ┌─────────────────────────────────────────────────┐
@@ -194,6 +195,17 @@ for _, msg := range messages {
 }
 
 // ============ 📄 Document Database ============
+// Register Schema (FQL) - Optional but recommended for performance
+client.DB.RegisterFQL(`
+    CREATE TABLE users (
+        id uuid,
+        name text,
+        email text,
+        age int,
+        PRIMARY KEY (id)
+    );
+`)
+
 // Insert document
 id, _ := client.DB.Insert("users", map[string]interface{}{
     "name":  "John Doe",
