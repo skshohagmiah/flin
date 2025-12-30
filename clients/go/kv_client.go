@@ -5,7 +5,7 @@ import (
 	"errors"
 
 	"github.com/skshohagmiah/flin/internal/net"
-	"github.com/skshohagmiah/flin/internal/protocol"
+	protocol "github.com/skshohagmiah/flin/internal/net"
 )
 
 // KVClient handles Key-Value store operations

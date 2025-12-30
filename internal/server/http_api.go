@@ -165,7 +165,7 @@ func (hs *HTTPServer) handleKVKeys(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get all keys and their values
-	kvPairs, err := hs.server.GetKVStore().ScanKeysWithValues("")
+	kvPairs, err := hs.server.GetKVStore().ScanKeysWithValues("", 100)
 	if err != nil {
 		writeError(w, "Failed to scan keys: "+err.Error(), http.StatusInternalServerError)
 		return

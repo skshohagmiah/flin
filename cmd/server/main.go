@@ -14,7 +14,6 @@ import (
 	"github.com/skshohagmiah/flin/internal/kv"
 	"github.com/skshohagmiah/flin/internal/queue"
 	"github.com/skshohagmiah/flin/internal/server"
-	"github.com/skshohagmiah/flin/internal/stream"
 )
 
 var (
@@ -70,20 +69,13 @@ func main() {
 	var store *kv.KVStore
 	var err error
 
-	if *useMemory {
-		fmt.Println("📦 Creating in-memory KV store...")
-		store, err = kv.NewMemory()
-		if err != nil {
-			log.Fatalf("Failed to create in-memory store: %v", err)
-		}
-	} else {
-		kvDataDir := *dataDir + "/kv"
-		fmt.Printf("📦 Creating disk-based KV store at %s...\n", kvDataDir)
-		store, err = kv.New(kvDataDir)
-		if err != nil {
-			log.Fatalf("Failed to create KV store: %v", err)
-		}
+	kvDataDir := *dataDir + "/kv"
+	fmt.Printf("📦 Creating disk-based KV store at %s...\n", kvDataDir)
+	store, err = kv.New(kvDataDir)
+	if err != nil {
+		log.Fatalf("Failed to create KV store: %v", err)
 	}
+
 	defer store.Close()
 
 	// Create Queue store (always disk-based)
@@ -98,11 +90,9 @@ func main() {
 	// Create Stream store (always disk-based)
 	streamDataDir := *dataDir + "/stream"
 	fmt.Printf("📦 Creating disk-based Stream store at %s...\n", streamDataDir)
-	streamStore, err := stream.New(streamDataDir)
 	if err != nil {
 		log.Fatalf("Failed to create stream store: %v", err)
 	}
-	defer streamStore.Close()
 
 	// Create Document store (always disk-based)
 	docDataDir := *dataDir + "/db"
@@ -122,7 +112,7 @@ func main() {
 		Bootstrap:         *joinAddr == "", // Bootstrap if not joining
 		DataDir:           *dataDir + "/cluster",
 		PartitionCount:    *partitionCount,
-		ReplicationFactor: 3,
+		ReplicationFactor: 1, // Changed to 1 for single-node benchmarks
 		HealthCheck: clusterkit.HealthCheckConfig{
 			Enabled:          true,
 			Interval:         5 * time.Second,
@@ -147,7 +137,6 @@ func main() {
 	srv, err := server.NewServerWithWorkers(
 		store,
 		queueStore,
-		streamStore,
 		docStore,
 		ck,
 		*kvPort,

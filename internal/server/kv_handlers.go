@@ -1,10 +1,11 @@
 package server
 
 import (
+	"encoding/binary"
 	"fmt"
 	"time"
 
-	"github.com/skshohagmiah/flin/internal/protocol"
+	protocol "github.com/skshohagmiah/flin/internal/net"
 )
 
 // KV operation handlers for binary protocol
@@ -193,19 +194,25 @@ func (c *Connection) processFastPath(cmd, key string, value []byte, startTime ti
 		}
 
 	case "INCR":
-		err := c.server.store.Incr(key)
+		val, err := c.server.store.Incr(key)
 		if err != nil {
 			response = formatError(err)
 		} else {
-			response = []byte("+OK\r\n")
+			// Return the new value as a bulk string
+			var buf [8]byte
+			binary.BigEndian.PutUint64(buf[:], uint64(val))
+			response = formatBulkString(buf[:])
 		}
 
 	case "DECR":
-		err := c.server.store.Decr(key)
+		val, err := c.server.store.Decr(key)
 		if err != nil {
 			response = formatError(err)
 		} else {
-			response = []byte("+OK\r\n")
+			// Return the new value as a bulk string
+			var buf [8]byte
+			binary.BigEndian.PutUint64(buf[:], uint64(val))
+			response = formatBulkString(buf[:])
 		}
 
 	default:
@@ -261,34 +268,40 @@ func (c *Connection) processFastPathBatch(cmd string, keys []string, values [][]
 
 	switch cmd {
 	case "MSET":
+		// Convert to map for BatchSet
+		kvPairs := make(map[string][]byte, len(keys))
 		for i, key := range keys {
-			err := c.server.store.Set(key, values[i], 0)
-			if err != nil {
-				c.sendError(err)
-				return
-			}
+			kvPairs[key] = values[i]
+		}
+		err := c.server.store.BatchSet(kvPairs, 0)
+		if err != nil {
+			c.sendError(err)
+			return
 		}
 		response = []byte("+OK\r\n")
 
 	case "MGET":
-		var results [][]byte
-		for _, key := range keys {
-			val, err := c.server.store.Get(key)
-			if err != nil {
-				c.sendError(err)
-				return
-			}
-			results = append(results, val)
+		results, err := c.server.store.BatchGet(keys)
+		if err != nil {
+			c.sendError(err)
+			return
 		}
-		response = formatBulkStrings(results)
+		// Convert map to ordered slice
+		var resultValues [][]byte
+		for _, key := range keys {
+			if val, ok := results[key]; ok {
+				resultValues = append(resultValues, val)
+			} else {
+				resultValues = append(resultValues, []byte{})
+			}
+		}
+		response = formatBulkStrings(resultValues)
 
 	case "MDEL":
-		for _, key := range keys {
-			err := c.server.store.Delete(key)
-			if err != nil {
-				c.sendError(err)
-				return
-			}
+		err := c.server.store.BatchDelete(keys)
+		if err != nil {
+			c.sendError(err)
+			return
 		}
 		response = []byte("+OK\r\n")
 

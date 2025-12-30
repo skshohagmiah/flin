@@ -2,8 +2,6 @@ package kv
 
 import (
 	"time"
-
-	"github.com/skshohagmiah/flin/internal/storage"
 )
 
 // StorageBackend defines the storage interface
@@ -12,12 +10,13 @@ type StorageBackend interface {
 	Get(key string) ([]byte, error)
 	Delete(key string) error
 	Exists(key string) (bool, error)
-	Incr(key string) error
-	Decr(key string) error
-	Scan(prefix string) ([][]byte, error)
-	ScanKeys(prefix string) ([]string, error)
-	ScanKeysWithValues(prefix string) (map[string][]byte, error)
+	Incr(key string) (int64, error) // ✅ Now returns int64
+	Decr(key string) (int64, error) // ✅ Now returns int64
+	Scan(prefix string, limit int) ([][]byte, error)
+	ScanKeys(prefix string, limit int) ([]string, error)
+	ScanKeysWithValues(prefix string, limit int) (map[string][]byte, error)
 	BatchSet(kvPairs map[string][]byte, ttl time.Duration) error
+	BatchSetNoTTL(kvPairs map[string][]byte) error
 	BatchGet(keys []string) (map[string][]byte, error)
 	BatchDelete(keys []string) error
 	Close() error
@@ -25,39 +24,26 @@ type StorageBackend interface {
 
 // KVStore is the developer-facing API for key-value operations
 type KVStore struct {
-	storage  StorageBackend
-	isMemory bool
+	storage StorageBackend
 }
 
-// New creates a new KV store with BadgerDB backend at the specified path
+// New creates a new KV store using BadgerDB backend
+// Uses a single BadgerDB instance for maximum performance and simplicity
 func New(path string) (*KVStore, error) {
-	store, err := storage.NewKVStorage(path)
+	store, err := NewKVStorage(path)
 	if err != nil {
 		return nil, err
 	}
 
 	return &KVStore{
-		storage:  store,
-		isMemory: false,
+		storage: store,
 	}, nil
 }
 
-// NewMemory creates a new in-memory KV store (like Redis)
-func NewMemory() (*KVStore, error) {
-	store, err := storage.NewMemoryStorage()
-	if err != nil {
-		return nil, err
-	}
-
-	return &KVStore{
-		storage:  store,
-		isMemory: true,
-	}, nil
-}
-
-// IsMemory returns true if this is an in-memory store
-func (k *KVStore) IsMemory() bool {
-	return k.isMemory
+// NewWithShards is deprecated - shardCount parameter is ignored
+// Use New() instead. Kept for backward compatibility.
+func NewWithShards(path string, shardCount int) (*KVStore, error) {
+	return New(path)
 }
 
 // Close closes the underlying storage
@@ -75,13 +61,13 @@ func (k *KVStore) Get(key string) ([]byte, error) {
 	return k.storage.Get(key)
 }
 
-// Incr increments a numeric value stored at key
-func (k *KVStore) Incr(key string) error {
+// Incr increments a numeric value and returns the new value
+func (k *KVStore) Incr(key string) (int64, error) {
 	return k.storage.Incr(key)
 }
 
-// Decr decrements a numeric value stored at key
-func (k *KVStore) Decr(key string) error {
+// Decr decrements a numeric value and returns the new value
+func (k *KVStore) Decr(key string) (int64, error) {
 	return k.storage.Decr(key)
 }
 
@@ -96,23 +82,31 @@ func (k *KVStore) Exists(key string) (bool, error) {
 }
 
 // Scan retrieves all values with keys matching the given prefix
-func (k *KVStore) Scan(prefix string) ([][]byte, error) {
-	return k.storage.Scan(prefix)
+// limit <= 0 means no limit
+func (k *KVStore) Scan(prefix string, limit int) ([][]byte, error) {
+	return k.storage.Scan(prefix, limit)
 }
 
 // ScanKeys retrieves all keys matching the given prefix
-func (k *KVStore) ScanKeys(prefix string) ([]string, error) {
-	return k.storage.ScanKeys(prefix)
+// limit <= 0 means no limit
+func (k *KVStore) ScanKeys(prefix string, limit int) ([]string, error) {
+	return k.storage.ScanKeys(prefix, limit)
 }
 
 // ScanKeysWithValues retrieves all keys and values matching the given prefix
-func (k *KVStore) ScanKeysWithValues(prefix string) (map[string][]byte, error) {
-	return k.storage.ScanKeysWithValues(prefix)
+// limit <= 0 means no limit
+func (k *KVStore) ScanKeysWithValues(prefix string, limit int) (map[string][]byte, error) {
+	return k.storage.ScanKeysWithValues(prefix, limit)
 }
 
-// BatchSet stores multiple key-value pairs in a single transaction
+// BatchSet stores multiple key-value pairs in a single transaction with TTL
 func (k *KVStore) BatchSet(kvPairs map[string][]byte, ttl time.Duration) error {
 	return k.storage.BatchSet(kvPairs, ttl)
+}
+
+// BatchSetNoTTL stores multiple key-value pairs without TTL (faster than BatchSet with ttl=0)
+func (k *KVStore) BatchSetNoTTL(kvPairs map[string][]byte) error {
+	return k.storage.BatchSetNoTTL(kvPairs)
 }
 
 // BatchGet retrieves multiple values by keys
